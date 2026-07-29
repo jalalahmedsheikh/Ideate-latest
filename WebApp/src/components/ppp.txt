@@ -1,0 +1,99 @@
+create a beautifull, animationed powerfull feed page using jsx and bootstrap classes using two APIs one for polls(AllPolls(GET) = http://localhost:8000/poll/allpolls) and second for posts(Allposts(GET) = http://localhost:8000/post/allposts) also analyze these schemas od poll and post
+
+
+
+
+
+import mongoose from "mongoose";
+
+const pollSchema = new mongoose.Schema(
+  {
+    question: { type: String, required: true },
+    options: [{ type: String, required: true }],
+    PostType: {
+      type: String,
+      default: "Poll", // Default value is "Poll"
+    },
+    votes: [{ type: Number, default: 0 }], // Track votes for each option
+    creator: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // Optional: Track creator
+    start: { type: Date, default: Date.now }, // Default start time is now
+    end: { type: Date }, // Optional: Set end date for the poll
+    maxVotes: { type: Number, default: 1 }, // Optional: Limit the number of votes per user
+    status: { 
+      type: String, 
+      enum: ["open", "closed", "archived"], 
+      default: "open" // Poll status (open, closed, or archived)
+    },
+    votesHistory: [{ // Optional: Track user votes
+      user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      optionIndex: { type: Number }
+    }]
+  },
+  { timestamps: true }
+);
+
+// Optional: You could add some custom methods to manage votes, like validating if a user has already voted.
+pollSchema.methods.vote = function(userId, optionIndex) {
+  // Check if the user has already voted
+  if (this.votesHistory.some(vote => vote.user.toString() === userId.toString())) {
+    throw new Error('User has already voted');
+  }
+
+  // Update the votes array (increment the selected option)
+  this.votes[optionIndex]++;
+  
+  // Add to votes history
+  this.votesHistory.push({ user: userId, optionIndex });
+  
+  return this.save();
+};
+
+export const Poll = mongoose.model("Poll", pollSchema);
+
+
+
+
+
+
+
+
+
+
+
+import mongoose, { Types } from "mongoose";
+
+const postSchema = new mongoose.Schema(
+  {
+    caption: { type: String, required: true },
+    author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    PostType: {
+      type: String,
+      default: "Post", // Default value is "Post"
+    },
+    likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    comments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Comment'}],
+    shareCount: { type: Number, default: 0 }, // Track shares
+    status: {
+      type: String,
+      enum: ["active", "deleted", "archived", "private"],
+      default: "active", // Manage post status
+    },
+    tags: [{ type: String }], // Tags for categorization
+    location: {
+      type: { type: String, default: "Point" },
+      coordinates: { type: [Number], index: "2dsphere" }, // Geospatial indexing
+    },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Track who updated
+    views: { type: Number, default: 0 }, // Track views
+    reactions: {
+      like: { type: [mongoose.Schema.Types.ObjectId], ref: 'User' },
+      love: { type: [mongoose.Schema.Types.ObjectId], ref: 'User' },
+      wow: { type: [mongoose.Schema.Types.ObjectId], ref: 'User' },
+      sad: { type: [mongoose.Schema.Types.ObjectId], ref: 'User' }
+      // Add more reactions as needed
+    },
+  },
+  { timestamps: true }
+);
+
+export const Post = mongoose.model("Post", postSchema);

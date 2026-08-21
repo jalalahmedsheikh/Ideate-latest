@@ -1,4 +1,7 @@
 import { User } from "../models/user.model.js";
+import { OTP } from "../models/otp.model.js";
+import { sendOTPEmail } from "../utills/emailService.js";
+import { cascadeDeleteUser } from "../utills/cascadeDeleteUser.js";
 import bcrypt from 'bcrypt'; // For password hashing
 import { generateToken } from "../utills/genrateToken.js";
 import { deleteMediaFromCloudinary, uploadMedia } from "../utills/cloudinary.js";
@@ -7,26 +10,229 @@ import redis, { getCached, setCached, invalidateCached } from "../config/redis.j
 import { queueNotification } from "../queues/queue.js";
 import jwt from "jsonwebtoken";
 
-// 1. Register User: Registers a new user with location, category, and other details.
+/**
+ * Check Username Availability & Format
+ */
+export const checkUsername = async (req, res) => {
+  try {
+    const { username } = req.body;
+
+    if (!username || username.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        available: false,
+        message: "Username is required.",
+      });
+    }
+
+    const trimmedUsername = username.trim();
+
+    // Regex check: 3 to 20 characters, letters, numbers, underscores allowed
+    const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+    if (!usernameRegex.test(trimmedUsername)) {
+      return res.status(400).json({
+        success: false,
+        available: false,
+        message: "Username must be 3-20 characters long and contain only letters, numbers, or underscores.",
+      });
+    }
+
+    // Case-insensitive database check
+    const existingUser = await User.findOne({
+      username: { $regex: new RegExp(`^${trimmedUsername}$`, "i") },
+    });
+
+    if (existingUser) {
+      return res.status(200).json({
+        success: true,
+        available: false,
+        message: "Username is already taken.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      available: true,
+      message: "Username is available!",
+    });
+  } catch (error) {
+    console.error("Check Username Error:", error);
+    return res.status(500).json({
+      success: false,
+      available: false,
+      message: "Server error checking username.",
+    });
+  }
+};
+
+/**
+ * Check Email Availability & Format
+ */
+export const checkEmail = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        available: false,
+        message: "Email is required.",
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return res.status(400).json({
+        success: false,
+        available: false,
+        message: "Please enter a valid email address.",
+      });
+    }
+
+    const existingUser = await User.findOne({ email: email.trim().toLowerCase() });
+    if (existingUser) {
+      return res.status(200).json({
+        success: true,
+        available: false,
+        message: "An account with this email already exists.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      available: true,
+      message: "Email is available.",
+    });
+  } catch (error) {
+    console.error("Check Email Error:", error);
+    return res.status(500).json({
+      success: false,
+      available: false,
+      message: "Server error checking email.",
+    });
+  }
+};
+
+/**
+ * Generate and Send Email OTP for Registration
+ */
+export const sendOTP = async (req, res) => {
+  try {
+    const { email, username } = req.body;
+
+    if (!email || !username) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and username are required.",
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanUsername = username.trim();
+
+    // Check if email or username already exist
+    const existingEmailUser = await User.findOne({ email: cleanEmail });
+    if (existingEmailUser) {
+      return res.status(400).json({
+        success: false,
+        message: "User already exists with this email.",
+      });
+    }
+
+    const existingUsernameUser = await User.findOne({
+      username: { $regex: new RegExp(`^${cleanUsername}$`, "i") },
+    });
+    if (existingUsernameUser) {
+      return res.status(400).json({
+        success: false,
+        message: "Username is already taken. Please choose another.",
+      });
+    }
+
+    // Generate 6-digit random OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Clear any previous OTPs for this email
+    await OTP.deleteMany({ email: cleanEmail });
+
+    // Save new OTP in MongoDB
+    await OTP.create({
+      email: cleanEmail,
+      otp,
+    });
+
+    // Dispatch email
+    await sendOTPEmail(cleanEmail, otp, cleanUsername);
+
+    return res.status(200).json({
+      success: true,
+      message: `Verification code sent to ${cleanEmail}. Please check your inbox.`,
+    });
+  } catch (error) {
+    console.error("Send OTP Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send verification code. Please try again.",
+    });
+  }
+};
+
+// 1. Register User: Registers a new user with OTP verification, username availability check & category.
 export const register = async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, email, password, category, otp } = req.body;
 
     // Validate inputs
     if (!username || !email || !password) {
       return res.status(400).json({
         success: false,
-        message: "All fields are required.",
+        message: "Username, email, and password are required.",
       });
     }
 
-    // Check if the user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanUsername = username.trim();
+
+    // Validate Username Format
+    const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+    if (!usernameRegex.test(cleanUsername)) {
       return res.status(400).json({
         success: false,
-        message: "User already exists with this email.",
+        message: "Username must be 3-20 characters long and contain only letters, numbers, or underscores.",
       });
+    }
+
+    // Check if the user already exists by email
+    const existingEmail = await User.findOne({ email: cleanEmail });
+    if (existingEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "An account with this email already exists.",
+      });
+    }
+
+    // Check if username is taken
+    const existingUsername = await User.findOne({
+      username: { $regex: new RegExp(`^${cleanUsername}$`, "i") },
+    });
+    if (existingUsername) {
+      return res.status(400).json({
+        success: false,
+        message: "Username is already taken.",
+      });
+    }
+
+    // Verify OTP (if provided or required)
+    if (otp) {
+      const otpRecord = await OTP.findOne({ email: cleanEmail }).sort({ createdAt: -1 });
+      if (!otpRecord || otpRecord.otp !== otp.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid or expired verification code. Please request a new code.",
+        });
+      }
+      // OTP is valid - clear it so it cannot be reused
+      await OTP.deleteMany({ email: cleanEmail });
     }
 
     // Hash the password
@@ -34,9 +240,11 @@ export const register = async (req, res) => {
 
     // Create the user
     const newUser = new User({
-      username,
-      email,
+      username: cleanUsername,
+      email: cleanEmail,
       password: hashedPassword,
+      category: category || "Ideate-User",
+      isverified: false,
     });
 
     // Save the new user
@@ -45,11 +253,11 @@ export const register = async (req, res) => {
     // Return success response
     return res.status(201).json({
       success: true,
-      message: "Account created successfully.",
+      message: "Account created successfully! You can now log in.",
       user: newUser,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Registration Error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error.",
@@ -622,6 +830,8 @@ export const toggleBlockUser = async (req, res) => {
   }
 };
 
+
+
 // Mute/Unmute user
 export const toggleMuteUser = async (req, res) => {
   try {
@@ -656,6 +866,42 @@ export const toggleMuteUser = async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ success: false, message: "Internal server error." });
+  }
+};
+
+// Permanent User Self-Service Cascade Account Deletion
+export const deleteAccount = async (req, res) => {
+  try {
+    const userId = req.id;
+    const { password } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    // Optional password verification if provided
+    if (password) {
+      const isPasswordMatch = await bcrypt.compare(password, user.password);
+      if (!isPasswordMatch) {
+        return res.status(400).json({ success: false, message: "Incorrect password. Account deletion aborted." });
+      }
+    }
+
+    // Execute full cascade deletion
+    const result = await cascadeDeleteUser(userId);
+
+    // Clear authentication cookie
+    return res
+      .status(200)
+      .cookie("token", "", { maxAge: 0 })
+      .json(result);
+  } catch (error) {
+    console.error("Error during deleteAccount:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error during account deletion."
+    });
   }
 };
 

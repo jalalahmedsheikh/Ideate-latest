@@ -16,4 +16,4 @@ const getPostById = async (req, res) => {
   }
 };
 
-module.exports = { getPostById };
+export { getPostById };

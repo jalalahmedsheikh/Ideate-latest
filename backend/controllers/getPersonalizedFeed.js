@@ -1,7 +1,7 @@
 import { Post } from "../models/post.model.js";
 import { Poll } from "../models/poll.model.js";
 import { User } from "../models/user.model.js";
-import { calculateSimilarityScore } from "../utils/recommendationUtils.js"; // A helper for ML recommendations
+import { calculateSimilarityScore } from "../utills/recommendationUtils.js";
 
 export const getPersonalizedFeed = async (req, res) => {
     try {

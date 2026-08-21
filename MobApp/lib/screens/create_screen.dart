@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/api_service.dart';
 
+import '../utils/app_colors.dart';
+import '../widgets/custom_button.dart';
+
 class CreateScreen extends StatefulWidget {
   const CreateScreen({super.key});
 
@@ -169,14 +172,15 @@ class _CreateScreenState extends State<CreateScreen> with SingleTickerProviderSt
           'Create Idea',
           style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 22),
         ),
-        backgroundColor: const Color(0xFF0B0B0F),
+        backgroundColor: AppColors.background,
         elevation: 0,
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: const Color(0xFF7828B4),
+          indicatorColor: AppColors.primary,
+          indicatorWeight: 3,
           labelColor: Colors.white,
-          unselectedLabelColor: Colors.grey,
-          dividerColor: Colors.transparent,
+          unselectedLabelColor: AppColors.textMuted,
+          dividerColor: AppColors.border,
           tabs: const [
             Tab(icon: Icon(Icons.edit_note), text: 'Write Post'),
             Tab(icon: Icon(Icons.poll_outlined), text: 'Create Poll'),
@@ -205,24 +209,14 @@ class _CreateScreenState extends State<CreateScreen> with SingleTickerProviderSt
                     validator: (v) => (v == null || v.isEmpty) ? 'Caption cannot be empty' : null,
                   ),
                   const SizedBox(height: 24),
-                  _isPublishingPost
-                      ? const Center(child: CircularProgressIndicator(color: Color(0xFF7828B4)))
-                      : ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF7828B4),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          onPressed: _publishPost,
-                          icon: const Icon(Icons.send),
-                          label: Text(
-                            'Publish Post',
-                            style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                        ),
+                  AppButton(
+                    text: 'Publish Post',
+                    icon: Icons.send,
+                    style: AppButtonStyle.gradient,
+                    isLoading: _isPublishingPost,
+                    onPressed: _publishPost,
+                    height: 52,
+                  ),
                 ],
               ),
             ),
@@ -259,10 +253,10 @@ class _CreateScreenState extends State<CreateScreen> with SingleTickerProviderSt
                       ),
                       TextButton.icon(
                         onPressed: _addOption,
-                        icon: const Icon(Icons.add, size: 18, color: Color(0xFF7828B4)),
+                        icon: const Icon(Icons.add, size: 18, color: AppColors.primary),
                         label: Text(
                           'Add Option',
-                          style: GoogleFonts.inter(color: const Color(0xFF7828B4), fontWeight: FontWeight.bold),
+                          style: GoogleFonts.inter(color: AppColors.primary, fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
@@ -288,7 +282,7 @@ class _CreateScreenState extends State<CreateScreen> with SingleTickerProviderSt
                             const SizedBox(width: 8),
                             IconButton(
                               onPressed: () => _removeOption(index),
-                              icon: const Icon(Icons.delete_outline, color: Colors.grey),
+                              icon: const Icon(Icons.delete_outline, color: AppColors.textMuted),
                             ),
                           ],
                         ),
@@ -296,24 +290,14 @@ class _CreateScreenState extends State<CreateScreen> with SingleTickerProviderSt
                     }),
                   ),
                   const SizedBox(height: 24),
-                  _isPublishingPoll
-                      ? const Center(child: CircularProgressIndicator(color: Color(0xFF7828B4)))
-                      : ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF7828B4),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          onPressed: _publishPoll,
-                          icon: const Icon(Icons.send),
-                          label: Text(
-                            'Publish Poll',
-                            style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                        ),
+                  AppButton(
+                    text: 'Publish Poll',
+                    icon: Icons.send,
+                    style: AppButtonStyle.gradient,
+                    isLoading: _isPublishingPoll,
+                    onPressed: _publishPoll,
+                    height: 52,
+                  ),
                 ],
               ),
             ),

@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http; // Added http import
 import '../models/user_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
+import '../utils/app_colors.dart';
+import '../widgets/custom_button.dart';
 
 // ... (rest of the file unchanged) ...
 
@@ -237,21 +239,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
               const SizedBox(height: 32),
 
-              _isSaving
-                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF7828B4)))
-                  : ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF7828B4),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: _saveProfile,
-                      child: Text(
-                        'Save Changes',
-                        style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                    ),
+              AppButton(
+                text: 'Save Changes',
+                style: AppButtonStyle.gradient,
+                isLoading: _isSaving,
+                onPressed: _saveProfile,
+                height: 52,
+              ),
             ],
           ),
         ),

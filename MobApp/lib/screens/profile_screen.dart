@@ -9,6 +9,9 @@ import '../services/api_service.dart';
 import '../widgets/post_card.dart';
 import '../widgets/poll_card.dart';
 import 'edit_profile.dart';
+import 'settings_screen.dart';
+import '../utils/app_colors.dart';
+import '../widgets/custom_button.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -150,9 +153,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout, color: Color(0xFFFD1D1D)),
-            onPressed: () async {
-              await authProvider.logout();
+            icon: const Icon(Icons.menu, color: Colors.white),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
             },
           ),
         ],
@@ -218,20 +224,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     const SizedBox(height: 2),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF7828B4).withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(6),
+                        gradient: AppColors.glassGradient,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: AppColors.primary.withOpacity(0.3)),
                       ),
                       child: Text(
                         user.category,
-                        style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF7828B4), fontWeight: FontWeight.bold),
+                        style: GoogleFonts.inter(fontSize: 12, color: AppColors.primaryLight, fontWeight: FontWeight.bold),
                       ),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       user.bio ?? 'No bio added yet.',
-                      style: GoogleFonts.inter(fontSize: 14, color: const Color(0xFFC4C4CC)),
+                      style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary),
                     ),
                   ],
                 ),
@@ -242,30 +249,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
               // Edit profile action button
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: SizedBox(
+                child: AppButton(
+                  text: 'Edit Profile',
+                  icon: Icons.edit,
+                  style: AppButtonStyle.secondary,
                   width: double.infinity,
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      side: const BorderSide(color: Color(0xFF2C2C3E)),
-                    ),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (context) => const EditProfileScreen()),
-                      ).then((_) {
-                        _fetchProfileData();
-                      });
-                    },
-                    child: Text(
-                      'Edit Profile',
-                      style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
-                  ),
+                  height: 44,
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const EditProfileScreen()),
+                    ).then((_) {
+                      _fetchProfileData();
+                    });
+                  },
                 ),
               ),
 
-              const Divider(color: Color(0xFF2C2C3E), height: 32),
+              const Divider(color: AppColors.border, height: 32),
 
               // Custom premium tabs
               Padding(
@@ -281,7 +282,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
 
-              const Divider(color: Color(0xFF2C2C3E), height: 16),
+              const Divider(color: AppColors.border, height: 16),
 
               // Tab contents
               _buildTabContent(),
@@ -294,7 +295,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildTabButton(int index, IconData icon, String label, int count) {
     final isActive = _activeTabIndex == index;
-    final activeColor = const Color(0xFF7828B4);
+    final activeColor = AppColors.primary;
     
     return Expanded(
       child: GestureDetector(

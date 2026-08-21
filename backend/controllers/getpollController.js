@@ -16,4 +16,4 @@ const getPollById = async (req, res) => {
   }
 };
 
-module.exports = { getPollById };
+export { getPollById };

@@ -298,6 +298,8 @@ export const listAllContent = async (req, res) => {
     }
 };
 
+import { cascadeDeleteUser } from "../utills/cascadeDeleteUser.js";
+
 // Delete Post or Poll from Admin
 export const deleteContent = async (req, res) => {
     try {
@@ -313,6 +315,22 @@ export const deleteContent = async (req, res) => {
         return res.status(200).json({ success: true, message: "Content deleted successfully." });
     } catch (error) {
         console.error("Admin Delete Content Error:", error);
+        return res.status(500).json({ success: false, message: "Internal server error." });
+    }
+};
+
+// Admin Cascade Delete User Account
+export const deleteUserByAdmin = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return res.status(400).json({ success: false, message: "User ID is required." });
+        }
+
+        const result = await cascadeDeleteUser(id);
+        return res.status(result.success ? 200 : 400).json(result);
+    } catch (error) {
+        console.error("Admin Delete User Error:", error);
         return res.status(500).json({ success: false, message: "Internal server error." });
     }
 };

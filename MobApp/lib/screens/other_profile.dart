@@ -7,6 +7,9 @@ import '../models/post_model.dart';
 import '../models/poll_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
+import '../utils/app_colors.dart';
+import '../widgets/custom_button.dart';
+import 'chat_screen.dart';
 import '../widgets/post_card.dart';
 import '../widgets/poll_card.dart';
 
@@ -270,22 +273,23 @@ class _OtherProfileScreenState extends State<OtherProfileScreen> {
                                   ],
                                 ],
                               ),
-                              const SizedBox(height: 2),
+                               const SizedBox(height: 2),
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF7828B4).withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(6),
+                                  gradient: AppColors.glassGradient,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: AppColors.primary.withOpacity(0.3)),
                                 ),
                                 child: Text(
                                   _profileUser!.category,
-                                  style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF7828B4), fontWeight: FontWeight.bold),
+                                  style: GoogleFonts.inter(fontSize: 12, color: AppColors.primaryLight, fontWeight: FontWeight.bold),
                                 ),
                               ),
                               const SizedBox(height: 8),
                               Text(
                                 _profileUser!.bio ?? 'No bio added.',
-                                style: GoogleFonts.inter(fontSize: 14, color: const Color(0xFFC4C4CC)),
+                                style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary),
                               ),
                             ],
                           ),
@@ -293,26 +297,44 @@ class _OtherProfileScreenState extends State<OtherProfileScreen> {
 
                         const SizedBox(height: 16),
 
-                        // Follow / Unfollow Toggle
+                        // Follow / Unfollow Toggle & Message Button
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: isFollowing ? const Color(0xFF2C2C3E) : const Color(0xFF7828B4),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: AppButton(
+                                  text: isFollowing ? 'Following' : 'Follow',
+                                  icon: isFollowing ? Icons.check : Icons.person_add,
+                                  style: isFollowing ? AppButtonStyle.secondary : AppButtonStyle.gradient,
+                                  height: 46,
+                                  onPressed: _toggleFollow,
+                                ),
                               ),
-                              onPressed: _toggleFollow,
-                              child: Text(
-                                isFollowing ? 'Following' : 'Follow',
-                                style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.bold),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: AppButton(
+                                  text: 'Message',
+                                  icon: Icons.chat_bubble_outline_rounded,
+                                  style: AppButtonStyle.outlined,
+                                  height: 46,
+                                  onPressed: () {
+                                    if (_profileUser != null) {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => ChatScreen(targetUser: _profileUser!),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                ),
                               ),
-                            ),
+                            ],
                           ),
                         ),
 
-                        const Divider(color: Color(0xFF2C2C3E), height: 32),
+                        const Divider(color: AppColors.border, height: 32),
 
                         // Creations Header
                         Padding(

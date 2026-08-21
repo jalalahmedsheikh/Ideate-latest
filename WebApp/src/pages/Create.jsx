@@ -272,7 +272,7 @@ export default function Create() {
           return;
         }
 
-        const response = await axiosInstance.post("/post/createPost", {
+        const response = await axiosInstance.post("/post/addNewPost", {
           caption,
         });
 

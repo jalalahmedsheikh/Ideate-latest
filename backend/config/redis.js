@@ -9,14 +9,36 @@ console.log(`Connecting to Redis at: ${redisUrl}`);
 
 const redis = new Redis(redisUrl, {
   maxRetriesPerRequest: null, // Required for BullMQ compatibility
+  retryStrategy(times) {
+    // Retry every 10s if connection failed repeatedly to prevent log spam
+    return Math.min(times * 1000, 10000);
+  },
 });
 
+// Intercept duplicate() used by BullMQ internal sub/bpop clients to catch ECONNREFUSED cleanly
+const originalDuplicate = redis.duplicate.bind(redis);
+redis.duplicate = (...args) => {
+  const dup = originalDuplicate(...args);
+  dup.on("error", () => {});
+  return dup;
+};
+
+let lastRedisErrorTime = 0;
 redis.on("connect", () => {
-  console.log("Redis connected successfully");
+  console.log("✅ Redis connected successfully");
 });
 
 redis.on("error", (err) => {
-  console.error("Redis connection error:", err);
+  const now = Date.now();
+  // Throttle error logs to once every 15 seconds to prevent console flooding
+  if (now - lastRedisErrorTime > 15000) {
+    lastRedisErrorTime = now;
+    if (err.code === "ECONNREFUSED") {
+      console.warn(`⚠️ Cannot connect to Redis at ${redisUrl} (ECONNREFUSED). BullMQ queues and caching will be retried automatically when Redis is running.`);
+    } else {
+      console.error("Redis connection error:", err.message);
+    }
+  }
 });
 
 // Cache Helpers

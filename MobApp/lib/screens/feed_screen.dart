@@ -7,6 +7,7 @@ import '../services/api_service.dart';
 import '../widgets/post_card.dart';
 import '../widgets/poll_card.dart';
 import 'search_screen.dart';
+import '../utils/app_colors.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isExplore;
@@ -17,10 +18,11 @@ class FeedScreen extends StatefulWidget {
   });
 
   @override
-  State<FeedScreen> createState() => _FeedScreenState();
+  State<FeedScreen> createState() => FeedScreenState();
 }
 
-class _FeedScreenState extends State<FeedScreen> {
+class FeedScreenState extends State<FeedScreen> {
+  final ScrollController _scrollController = ScrollController();
   List<dynamic> _feedItems = [];
   bool _isLoading = true;
   String? _error;
@@ -35,6 +37,13 @@ class _FeedScreenState extends State<FeedScreen> {
   void didUpdateWidget(covariant FeedScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.isExplore != widget.isExplore) {
+      _fetchFeed();
+    }
+  }
+
+  void scrollToTopAndRefresh() {
+    if (mounted) {
+      _scrollController.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
       _fetchFeed();
     }
   }
@@ -135,13 +144,13 @@ class _FeedScreenState extends State<FeedScreen> {
           widget.isExplore ? 'Ideate Explore' : 'Following Feed',
           style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 22),
         ),
-        backgroundColor: const Color(0xFF0B0B0F),
+        backgroundColor: AppColors.background,
         centerTitle: false,
         elevation: 0,
         actions: [
           IconButton(
             tooltip: 'Search',
-            icon: const Icon(Icons.search_rounded, color: Colors.white, size: 26),
+            icon: const Icon(Icons.search_rounded, color: AppColors.textPrimary, size: 26),
             onPressed: () {
               Navigator.push(
                 context,
@@ -161,7 +170,7 @@ class _FeedScreenState extends State<FeedScreen> {
       body: _isLoading
           ? const Center(
               child: CircularProgressIndicator(
-                color: Color(0xFF7828B4),
+                color: AppColors.primary,
               ),
             )
           : _error != null
@@ -171,7 +180,7 @@ class _FeedScreenState extends State<FeedScreen> {
                     child: Text(
                       _error!,
                       textAlign: TextAlign.center,
-                      style: GoogleFonts.inter(fontSize: 16, color: Colors.grey),
+                      style: GoogleFonts.inter(fontSize: 16, color: AppColors.textSecondary),
                     ),
                   ),
                 )
@@ -179,14 +188,15 @@ class _FeedScreenState extends State<FeedScreen> {
                   ? Center(
                       child: Text(
                         'No creations shared yet.',
-                        style: GoogleFonts.inter(fontSize: 16, color: Colors.grey),
+                        style: GoogleFonts.inter(fontSize: 16, color: AppColors.textSecondary),
                       ),
                     )
                   : RefreshIndicator(
-                      color: const Color(0xFF7828B4),
-                      backgroundColor: const Color(0xFF181824),
+                      color: AppColors.primary,
+                      backgroundColor: AppColors.surface,
                       onRefresh: _fetchFeed,
                       child: ListView.builder(
+                        controller: _scrollController,
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         itemCount: _feedItems.length,
                         itemBuilder: (context, index) {

@@ -1,10 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
-  static const String baseUrl = 'http://10.151.191.130:8000';
+  static String get baseUrl {
+    if (kIsWeb) {
+      return 'http://localhost:8000';
+    }
+    // Using local network IP so physical mobile phone can reach backend server on same Wi-Fi
+    return 'http://192.168.100.77:8000';
+  }
 
   // Helper to fetch persistent JWT token
   static Future<String?> getToken() async {
@@ -47,10 +54,10 @@ class ApiService {
   }
 
   // DELETE request wrapper
-  static Future<http.Response> delete(String path) async {
+  static Future<http.Response> delete(String path, {Map<String, dynamic>? body}) async {
     final url = Uri.parse('$baseUrl$path');
     final headers = await getHeaders();
-    return await http.delete(url, headers: headers);
+    return await http.delete(url, headers: headers, body: body != null ? json.encode(body) : null);
   }
 
   // Multipart request for image uploads (e.g. updating profile pictures)

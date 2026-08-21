@@ -7,7 +7,11 @@ export const generateToken = async (res, user, message) => {
   });
 
   // Save session in Redis for active session tracking with a 10-day TTL
-  await redis.set(`session:${user._id}`, token, "EX", 10 * 24 * 60 * 60);
+  try {
+    await redis.set(`session:${user._id}`, token, "EX", 10 * 24 * 60 * 60);
+  } catch (err) {
+    console.warn("⚠️ Redis session tracking skipped (Redis offline):", err.message);
+  }
 
   return res
     .status(200)

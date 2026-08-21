@@ -8,6 +8,7 @@ import '../models/user_model.dart';
 import '../providers/auth_provider.dart';
 import '../screens/other_profile.dart';
 import '../services/api_service.dart';
+import '../utils/app_colors.dart';
 import 'comment_sheet.dart';
 
 class PostCard extends StatefulWidget {
@@ -329,10 +330,10 @@ class _PostCardState extends State<PostCard> {
               style: GoogleFonts.inter(
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
-                color: Colors.white,
+                color: AppColors.textPrimary,
               ),
             ),
-            const Divider(color: Color(0xFF2C2C3E), height: 24),
+            const Divider(color: AppColors.border, height: 24),
 
             // Actions (Like, Comment, Share, Bookmark)
             Row(
@@ -344,12 +345,15 @@ class _PostCardState extends State<PostCard> {
                     children: [
                       Icon(
                         _isLiked ? Icons.favorite : Icons.favorite_border,
-                        color: _isLiked ? const Color(0xFFFD1D1D) : Colors.white,
+                        color: _isLiked ? AppColors.accentPink : AppColors.textSecondary,
                       ),
                       const SizedBox(width: 6),
                       Text(
                         _isLiked ? 'Liked' : 'Like',
-                        style: GoogleFonts.inter(color: Colors.white),
+                        style: GoogleFonts.inter(
+                          color: _isLiked ? AppColors.accentPink : AppColors.textSecondary,
+                          fontWeight: _isLiked ? FontWeight.bold : FontWeight.normal,
+                        ),
                       ),
                     ],
                   ),
@@ -358,11 +362,11 @@ class _PostCardState extends State<PostCard> {
                   onTap: _showComments,
                   child: Row(
                     children: [
-                      const Icon(Icons.comment_outlined, color: Colors.white),
+                      const Icon(Icons.comment_outlined, color: AppColors.textSecondary),
                       const SizedBox(width: 6),
                       Text(
                         'Comment',
-                        style: GoogleFonts.inter(color: Colors.white),
+                        style: GoogleFonts.inter(color: AppColors.textSecondary),
                       ),
                     ],
                   ),
@@ -375,11 +379,11 @@ class _PostCardState extends State<PostCard> {
                   },
                   child: Row(
                     children: [
-                      const Icon(Icons.share_outlined, color: Colors.white),
+                      const Icon(Icons.share_outlined, color: AppColors.textSecondary),
                       const SizedBox(width: 6),
                       Text(
                         'Share',
-                        style: GoogleFonts.inter(color: Colors.white),
+                        style: GoogleFonts.inter(color: AppColors.textSecondary),
                       ),
                     ],
                   ),
@@ -389,7 +393,7 @@ class _PostCardState extends State<PostCard> {
                   constraints: const BoxConstraints(),
                   icon: Icon(
                     _isBookmarked ? Icons.bookmark : Icons.bookmark_border,
-                    color: _isBookmarked ? const Color(0xFF7828B4) : Colors.white,
+                    color: _isBookmarked ? AppColors.primary : AppColors.textSecondary,
                   ),
                   onPressed: _toggleBookmark,
                 ),

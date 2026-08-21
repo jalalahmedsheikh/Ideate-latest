@@ -29,13 +29,17 @@ const isAuthenticated = async (req, res, next) => {
       });
     }
 
-    // Verify session in Redis
-    const cachedToken = await redis.get(`session:${verifyToken.userId}`);
-    if (!cachedToken || cachedToken !== token) {
-      return res.status(401).json({
-        success: false,
-        message: "Session expired or invalid. Please login again.",
-      });
+    // Verify session in Redis if available
+    try {
+      const cachedToken = await redis.get(`session:${verifyToken.userId}`);
+      if (cachedToken && cachedToken !== token) {
+        return res.status(401).json({
+          success: false,
+          message: "Session expired or invalid. Please login again.",
+        });
+      }
+    } catch (redisErr) {
+      console.warn("⚠️ Session Redis check skipped:", redisErr.message);
     }
 
     // Attach the user ID to the request object for use in subsequent routes

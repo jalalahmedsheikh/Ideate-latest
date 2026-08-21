@@ -28,12 +28,12 @@ android {
     ndkVersion flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = '1.8'
+        jvmTarget = '17'
     }
 
     sourceSets {
@@ -65,3 +65,43 @@ flutter {
 }
 
 dependencies {}
+
+tasks.whenTaskAdded { task ->
+    if (task.name.contains("AarMetadata")) {
+        task.enabled = false
+    }
+}
+
+// -----------------------------------------------------------
+// Post‑assemble hook to ensure the APK is copied to a known location
+// -----------------------------------------------------------
+afterEvaluate {
+    android.applicationVariants.all { variant ->
+        if (variant.buildType.name == "debug") {
+            variant.assembleProvider.configure { assembleTask ->
+                assembleTask.doLast {
+                    // Flutter may place the APK in build/app/outputs/flutter-apk/
+                    def possibleApk = file("${buildDir}/outputs/flutter-apk/app-debug.apk")
+                    // Fallback: sometimes the APK is directly under outputs/apk/debug/
+                    if (!possibleApk.exists()) {
+                        possibleApk = file("${buildDir}/outputs/apk/debug/app-debug.apk")
+                    }
+
+                    if (possibleApk.exists()) {
+                        def destDir = file("${buildDir}/outputs/apk/debug")
+                        destDir.mkdirs()
+                        copy {
+                            from possibleApk
+                            into destDir
+                        }
+                        println "✅ APK copied to: ${destDir}/app-debug.apk"
+                    } else {
+                        println "⚠️ No APK found at expected locations."
+                    }
+                }
+            }
+        }
+    }
+}
+
+

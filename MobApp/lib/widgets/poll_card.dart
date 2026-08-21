@@ -7,6 +7,7 @@ import '../models/poll_model.dart';
 import '../providers/auth_provider.dart';
 import '../screens/other_profile.dart';
 import '../services/api_service.dart';
+import '../utils/app_colors.dart';
 import '../widgets/post_card.dart'; // import extension CopyWithBookmarks
 
 class PollCard extends StatefulWidget {
@@ -338,21 +339,28 @@ class _PollCardState extends State<PollCard> {
                     margin: const EdgeInsets.only(bottom: 12),
                     height: 52,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1E1E2C),
+                      color: AppColors.inputBackground,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: isSelected ? const Color(0xFF7828B4) : const Color(0xFF2C2C3E),
+                        color: isSelected ? AppColors.primary : AppColors.border,
                         width: isSelected ? 2 : 1,
                       ),
                     ),
                     child: Stack(
                       children: [
-                        // Percent bar
+                        // Percent bar with gradient
                         FractionallySizedBox(
                           widthFactor: percent,
                           child: Container(
                             decoration: BoxDecoration(
-                              color: const Color(0xFF7828B4).withOpacity(0.2),
+                              gradient: isSelected
+                                  ? AppColors.primaryGradient
+                                  : LinearGradient(
+                                      colors: [
+                                        AppColors.primary.withOpacity(0.3),
+                                        AppColors.secondary.withOpacity(0.3),
+                                      ],
+                                    ),
                               borderRadius: BorderRadius.circular(10),
                             ),
                           ),
@@ -368,14 +376,14 @@ class _PollCardState extends State<PollCard> {
                                 style: GoogleFonts.inter(
                                   fontSize: 15,
                                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                  color: Colors.white,
+                                  color: AppColors.textPrimary,
                                 ),
                               ),
                               Text(
                                 '$percentText ($voteCount)',
                                 style: GoogleFonts.inter(
                                   fontSize: 14,
-                                  color: isSelected ? const Color(0xFF7828B4) : Colors.grey,
+                                  color: isSelected ? Colors.white : AppColors.textSecondary,
                                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                                 ),
                               ),
@@ -396,7 +404,7 @@ class _PollCardState extends State<PollCard> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        side: const BorderSide(color: Color(0xFF2C2C3E)),
+                        side: const BorderSide(color: AppColors.border),
                         alignment: Alignment.centerLeft,
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                       ),
@@ -405,7 +413,7 @@ class _PollCardState extends State<PollCard> {
                         option,
                         style: GoogleFonts.inter(
                           fontSize: 15,
-                          color: const Color(0xFFE1E1E6),
+                          color: AppColors.textPrimary,
                         ),
                       ),
                     ),
@@ -422,14 +430,14 @@ class _PollCardState extends State<PollCard> {
               children: [
                 Text(
                   '$_totalVotes Votes',
-                  style: GoogleFonts.inter(color: Colors.grey, fontSize: 13),
+                  style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 13),
                 ),
                 IconButton(
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                   icon: Icon(
                     _isBookmarked ? Icons.bookmark : Icons.bookmark_border,
-                    color: _isBookmarked ? const Color(0xFF7828B4) : Colors.white,
+                    color: _isBookmarked ? AppColors.primary : AppColors.textSecondary,
                   ),
                   onPressed: _toggleBookmark,
                 ),

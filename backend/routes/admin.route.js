@@ -10,7 +10,8 @@ import {
     resolveReport,
     sendAdminNotification,
     listAllContent,
-    deleteContent
+    deleteContent,
+    deleteUserByAdmin
 } from "../controllers/admin.controller.js";
 
 const router = express.Router();
@@ -33,6 +34,7 @@ router.route("/analytics").get(isAuthenticated, isAdmin, getDashboardAnalytics);
 router.route("/users").get(isAuthenticated, isAdmin, listAllUsers);
 router.route("/users/ban").post(isAuthenticated, isAdmin, toggleBanUser);
 router.route("/users/verify").post(isAuthenticated, isAdmin, toggleVerifyUser);
+router.route("/users/:id").delete(isAuthenticated, isAdmin, deleteUserByAdmin);
 router.route("/reports").get(isAuthenticated, isAdmin, listAllReports);
 router.route("/reports/resolve").post(isAuthenticated, isAdmin, resolveReport);
 router.route("/content").get(isAuthenticated, isAdmin, listAllContent);

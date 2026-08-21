@@ -9,6 +9,8 @@ import '../services/api_service.dart';
 import '../widgets/post_card.dart';
 import '../widgets/poll_card.dart';
 import 'other_profile.dart';
+import '../utils/app_colors.dart';
+import '../widgets/custom_button.dart';
 
 // ─────────────────────────────────────────────
 // Data classes
@@ -73,10 +75,10 @@ class _SearchScreenState extends State<SearchScreen>
   List<PollModel> _polls = [];
 
   // ── constants ──────────────────────────────
-  static const _purple = Color(0xFF7828B4);
-  static const _bg = Color(0xFF0B0B0F);
-  static const _card = Color(0xFF181824);
-  static const _border = Color(0xFF2C2C3E);
+  static const _purple = AppColors.primary;
+  static const _bg = AppColors.background;
+  static const _card = AppColors.cardBackground;
+  static const _border = AppColors.border;
 
   @override
   void initState() {

@@ -378,12 +378,18 @@ export const addComment = async (req, res) => {
     const userCommentById = req.id;
     const { text } = req.body;
 
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({ message: 'Comment text is required', success: false });
+    }
+
     const post = await Post.findById(postId);
-    if (!post) return res.status(404).json({ message: 'Post not found', success: false });
-    if (!text) return res.status(400).json({ message: 'text is required', success: false });
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found', success: false });
+    }
 
     const comment = await Comment.create({
-      text,
+      content: text.trim(),
+      text: text.trim(),
       author: userCommentById,
       post: postId
     });
@@ -396,28 +402,49 @@ export const addComment = async (req, res) => {
     post.comments.push(comment._id);
     await post.save();
 
-    // Invalidate caches
-    await invalidatePostCaches(postId, post.author.toString());
+    // Invalidate caches safely
+    try {
+      const authorIdStr = post.author ? post.author.toString() : null;
+      await invalidatePostCaches(postId, authorIdStr);
+    } catch (cacheErr) {
+      console.warn("⚠️ Cache invalidation warning in addComment:", cacheErr.message);
+    }
 
     // Real-time: push new comment to post room subscribers
-    io.to(`post:${postId}`).emit('post:comment_update', {
-      postId,
-      comment,
-      commentCount: post.comments.length,
-    });
+    try {
+      if (io) {
+        io.to(`post:${postId}`).emit('post:comment_update', {
+          postId,
+          comment,
+          commentCount: post.comments.length,
+        });
+      }
+    } catch (socketErr) {
+      console.warn("⚠️ Socket emit warning in addComment:", socketErr.message);
+    }
 
     // Queue comment notification asynchronously
-    const postOwnerId = post.author.toString();
-    if (postOwnerId !== userCommentById) {
-      const commenter = await User.findById(userCommentById).select('username profileImage name');
-      await queueNotification({
-        type: 'comment',
-        userId: userCommentById,
-        userDetails: { username: commenter.username, profileImage: commenter.profileImage, name: commenter.name },
-        postId,
-        message: `${commenter.name || commenter.username} commented on your post: "${text.slice(0, 10)}..."`,
-        targetOwnerId: postOwnerId
-      });
+    try {
+      const postOwnerId = post.author ? post.author.toString() : null;
+      if (postOwnerId && postOwnerId !== userCommentById) {
+        const commenter = await User.findById(userCommentById).select('username profileImage name');
+        if (commenter) {
+          await queueNotification({
+            type: 'comment',
+            userId: userCommentById,
+            userDetails: {
+              username: commenter.username || 'User',
+              profileImage: commenter.profileImage || null,
+              name: commenter.name || commenter.username || 'User',
+            },
+            postId,
+            message: `${commenter.name || commenter.username} commented on your post: "${text.trim().slice(0, 15)}..."`,
+            targetOwnerId: postOwnerId
+          });
+        }
+      }
+    } catch (notifErr) {
+      console.warn("⚠️ Notification queue warning in addComment:", notifErr.message);
     }
 
     return res.status(201).json({
@@ -426,10 +453,10 @@ export const addComment = async (req, res) => {
       success: true
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error in addComment:", error);
     return res.status(500).json({
       success: false,
-      message: "Internal server error."
+      message: error.message || "Internal server error."
     });
   }
 };

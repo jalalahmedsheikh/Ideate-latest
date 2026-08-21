@@ -37,8 +37,6 @@ const userSchema = new mongoose.Schema(
 
 // Create a geospatial index on the `location` field to allow geospatial queries
 userSchema.index({ location: "2dsphere" });
-userSchema.index({ username: 1 }, { unique: true });
-userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ followers: 1 });
 userSchema.index({ followings: 1 });
 

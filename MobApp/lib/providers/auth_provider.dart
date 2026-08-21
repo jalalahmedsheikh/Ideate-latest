@@ -82,23 +82,73 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  // Check username availability
+  Future<Map<String, dynamic>> checkUsername(String username) async {
+    try {
+      final response = await ApiService.post('/user/check-username', {
+        'username': username,
+      });
+      final data = json.decode(response.body);
+      return {
+        'success': data['success'] ?? false,
+        'available': data['available'] ?? false,
+        'message': data['message'] ?? 'Could not verify username',
+      };
+    } catch (e) {
+      return {'success': false, 'available': false, 'message': 'Network error'};
+    }
+  }
+
+  // Send Email OTP
+  Future<Map<String, dynamic>> sendOtp(String email, String username) async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final response = await ApiService.post('/user/send-otp', {
+        'email': email,
+        'username': username,
+      });
+
+      final data = json.decode(response.body);
+      _isLoading = false;
+      notifyListeners();
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        return {'success': true, 'message': data['message'] ?? 'Verification code sent!'};
+      } else {
+        return {'success': false, 'message': data['message'] ?? 'Failed to send verification code.'};
+      }
+    } catch (e) {
+      _isLoading = false;
+      notifyListeners();
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
   // Handle user registration
   Future<Map<String, dynamic>> register(
     String username,
     String email,
     String password,
-    String category,
-  ) async {
+    String category, {
+    String? otp,
+  }) async {
     _isLoading = true;
     notifyListeners();
 
     try {
-      final response = await ApiService.post('/user/register', {
+      final payload = <String, dynamic>{
         'username': username,
         'email': email,
         'password': password,
         'category': category,
-      });
+      };
+      if (otp != null && otp.isNotEmpty) {
+        payload['otp'] = otp;
+      }
+
+      final response = await ApiService.post('/user/register', payload);
 
       final data = json.decode(response.body);
       if ((response.statusCode == 200 || response.statusCode == 201) && data['success'] == true) {
@@ -117,7 +167,8 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  // Update local currentUser object
+
+
   void updateCurrentUser(UserModel user) {
     _currentUser = user;
     notifyListeners();
@@ -153,5 +204,38 @@ class AuthProvider with ChangeNotifier {
     await prefs.remove('jwt_token');
     
     notifyListeners();
+  }
+
+  // Handle account deletion
+  Future<Map<String, dynamic>> deleteAccount({String? password}) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final body = password != null && password.isNotEmpty ? {'password': password} : null;
+      final response = await ApiService.delete('/user/delete-account', body: body);
+      _isLoading = false;
+      notifyListeners();
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          _token = null;
+          _currentUser = null;
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove('jwt_token');
+          notifyListeners();
+          return {'success': true, 'message': data['message'] ?? 'Account deleted successfully.'};
+        } else {
+          return {'success': false, 'message': data['message'] ?? 'Failed to delete account.'};
+        }
+      } else {
+        final data = json.decode(response.body);
+        return {'success': false, 'message': data['message'] ?? 'Failed to delete account (${response.statusCode})'};
+      }
+    } catch (e) {
+      _isLoading = false;
+      notifyListeners();
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
   }
 }

@@ -4,6 +4,9 @@ import {
   login, 
   logout, 
   register, 
+  checkUsername,
+  checkEmail,
+  sendOTP,
   suggestedUsers, 
   toggleFollow, 
   updateProfile, 
@@ -12,7 +15,8 @@ import {
   respondToFollowRequest,
   toggleAccountPrivacy,
   toggleBlockUser,
-  toggleMuteUser
+  toggleMuteUser,
+  deleteAccount
 } from '../controllers/user.controller.js'
 import isAuthenticated from '../middlewares/isAuthenticated.js'
 import upload from "../utills/multer.js";
@@ -27,9 +31,13 @@ const authLimiter = rateLimiter({
   message: "Too many attempts from this IP, please try again after 15 minutes."
 });
 
+router.route("/check-username").post(checkUsername)
+router.route("/check-email").post(checkEmail)
+router.route("/send-otp").post(authLimiter, sendOTP)
 router.route("/register").post(authLimiter, register)
 router.route("/login").post(authLimiter, login)
 router.route("/logout").get(logout)
+router.route("/delete-account").delete(isAuthenticated, deleteAccount)
 router.route("/profile").get(isAuthenticated,getUserProfile)
 router.route("/profile/:id").get(getSingleUser)
 router.route("/profile/update").put(isAuthenticated, upload.single("profilePhoto"),updateProfile)

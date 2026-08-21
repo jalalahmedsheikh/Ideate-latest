@@ -1,7 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'navigation_home.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../utils/app_colors.dart';
+import '../widgets/custom_button.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -25,6 +29,12 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
   final _registerPasswordController = TextEditingController();
   String _selectedCategory = 'Ideate-User';
 
+  // Username live availability checking state
+  Timer? _debounceTimer;
+  bool _isCheckingUsername = false;
+  bool? _isUsernameAvailable;
+  String _usernameStatusMsg = '';
+
   final List<String> _categories = [
     'Ideate-User',
     'Mern Stack Developer',
@@ -46,6 +56,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _tabController.dispose();
     _loginEmailController.dispose();
     _loginPasswordController.dispose();
@@ -53,6 +64,49 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     _registerEmailController.dispose();
     _registerPasswordController.dispose();
     super.dispose();
+  }
+
+  // Handle Username Input Changes with 500ms Debounce
+  void _onUsernameChanged(String val) {
+    if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
+
+    final username = val.trim();
+    if (username.isEmpty) {
+      setState(() {
+        _isCheckingUsername = false;
+        _isUsernameAvailable = null;
+        _usernameStatusMsg = '';
+      });
+      return;
+    }
+
+    if (username.length < 3) {
+      setState(() {
+        _isCheckingUsername = false;
+        _isUsernameAvailable = false;
+        _usernameStatusMsg = 'Username must be at least 3 characters.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isCheckingUsername = true;
+      _isUsernameAvailable = null;
+      _usernameStatusMsg = 'Checking availability...';
+    });
+
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () async {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final res = await authProvider.checkUsername(username);
+
+      if (mounted) {
+        setState(() {
+          _isCheckingUsername = false;
+          _isUsernameAvailable = res['available'] == true;
+          _usernameStatusMsg = res['message'] ?? '';
+        });
+      }
+    });
   }
 
   Future<void> _handleLogin() async {
@@ -71,32 +125,285 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
           backgroundColor: result['success'] ? Colors.green : Colors.red,
         ),
       );
+      if (result['success']) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const NavigationHome()),
+        );
+      }
     }
   }
 
-  Future<void> _handleRegister() async {
+  // Initiate Registration Flow (Checks Username & Triggers OTP Email)
+  Future<void> _handleRegisterInitiate() async {
     if (!_registerFormKey.currentState!.validate()) return;
 
+    if (_isUsernameAvailable == false) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_usernameStatusMsg.isNotEmpty ? _usernameStatusMsg : 'Please choose an available username.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final result = await authProvider.register(
-      _registerUsernameController.text.trim(),
+
+    // Send OTP verification code
+    final otpResult = await authProvider.sendOtp(
       _registerEmailController.text.trim(),
-      _registerPasswordController.text,
-      _selectedCategory,
+      _registerUsernameController.text.trim(),
     );
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result['message']),
-          backgroundColor: result['success'] ? Colors.green : Colors.red,
-        ),
-      );
-      if (result['success']) {
-        // Automatically switch to login tab
-        _tabController.animateTo(0);
+      if (otpResult['success']) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(otpResult['message']),
+            backgroundColor: Colors.green,
+          ),
+        );
+        // Show OTP Modal Dialog
+        _showOtpVerificationDialog();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(otpResult['message']),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
+  }
+
+  // Display OTP Verification Dialog
+  void _showOtpVerificationDialog() {
+    final List<TextEditingController> otpControllers = List.generate(6, (_) => TextEditingController());
+    final List<FocusNode> focusNodes = List.generate(6, (_) => FocusNode());
+    int resendSeconds = 60;
+    Timer? timer;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E2C),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (BuildContext modalContext) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            timer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+              if (resendSeconds > 0) {
+                setModalState(() {
+                  resendSeconds--;
+                });
+              } else {
+                t.cancel();
+              }
+            });
+
+            Future<void> submitOtp() async {
+              final otpCode = otpControllers.map((c) => c.text).join().trim();
+              if (otpCode.length < 6) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please enter all 6 digits of the verification code.'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+
+              final authProvider = Provider.of<AuthProvider>(context, listen: false);
+              final result = await authProvider.register(
+                _registerUsernameController.text.trim(),
+                _registerEmailController.text.trim(),
+                _registerPasswordController.text,
+                _selectedCategory,
+                otp: otpCode,
+              );
+
+              if (mounted) {
+                if (result['success']) {
+                  timer?.cancel();
+                  Navigator.of(modalContext).pop(); // Close modal sheet
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(result['message']),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                  // Automatically switch to login tab
+                  _tabController.animateTo(0);
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(result['message']),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 24,
+                right: 24,
+                top: 24,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 32,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[700],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Icon(Icons.mark_email_read_outlined, size: 48, color: Color(0xFF7828B4)),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Verify Email Address',
+                    style: GoogleFonts.outfit(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'We sent a 6-digit verification code to:\n${_registerEmailController.text.trim()}',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFF8D8D99)),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // 6 Digit PIN Row
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(6, (index) {
+                      return SizedBox(
+                        width: 44,
+                        height: 54,
+                        child: TextField(
+                          controller: otpControllers[index],
+                          focusNode: focusNodes[index],
+                          keyboardType: TextInputType.number,
+                          textAlign: TextAlign.center,
+                          maxLength: 1,
+                          style: GoogleFonts.outfit(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                          decoration: InputDecoration(
+                            counterText: '',
+                            filled: true,
+                            fillColor: const Color(0xFF13131A),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: const BorderSide(color: Color(0xFF33334d)),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: const BorderSide(color: Color(0xFF7828B4), width: 2),
+                            ),
+                          ),
+                          onChanged: (val) {
+                            if (val.isNotEmpty && index < 5) {
+                              focusNodes[index + 1].requestFocus();
+                            } else if (val.isEmpty && index > 0) {
+                              focusNodes[index - 1].requestFocus();
+                            }
+                            if (otpControllers.every((c) => c.text.isNotEmpty)) {
+                              submitOtp();
+                            }
+                          },
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Verify Button
+                  Consumer<AuthProvider>(
+                    builder: (context, auth, _) {
+                      return auth.isLoading
+                          ? const CircularProgressIndicator(color: Color(0xFF7828B4))
+                          : ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF7828B4),
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size(double.infinity, 50),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onPressed: submitOtp,
+                              child: Text(
+                                'Verify & Create Account',
+                                style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                            );
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Resend Timer Row
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        "Didn't receive code? ",
+                        style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFF8D8D99)),
+                      ),
+                      resendSeconds > 0
+                          ? Text(
+                              'Resend in ${resendSeconds}s',
+                              style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFF7828B4), fontWeight: FontWeight.bold),
+                            )
+                          : TextButton(
+                              onPressed: () async {
+                                final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                                await authProvider.sendOtp(
+                                  _registerEmailController.text.trim(),
+                                  _registerUsernameController.text.trim(),
+                                );
+                                setModalState(() {
+                                  resendSeconds = 60;
+                                });
+                                timer = Timer.periodic(const Duration(seconds: 1), (t) {
+                                  if (resendSeconds > 0) {
+                                    setModalState(() {
+                                      resendSeconds--;
+                                    });
+                                  } else {
+                                    t.cancel();
+                                  }
+                                });
+                              },
+                              child: Text(
+                                'Resend Code',
+                                style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFF7828B4), fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    ).then((_) {
+      timer?.cancel();
+    });
   }
 
   @override
@@ -155,19 +462,27 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                     Container(
                       height: 48,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF1E1E2C),
+                        color: AppColors.surfaceElevated,
                         borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.border),
                       ),
                       child: TabBar(
                         controller: _tabController,
                         indicatorSize: TabBarIndicatorSize.tab,
                         indicator: BoxDecoration(
-                          color: const Color(0xFF7828B4),
+                          gradient: AppColors.buttonGradient,
                           borderRadius: BorderRadius.circular(10),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.primary.withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
                         dividerColor: Colors.transparent,
                         labelColor: Colors.white,
-                        unselectedLabelColor: const Color(0xFF8D8D99),
+                        unselectedLabelColor: AppColors.textMuted,
                         labelStyle: GoogleFonts.inter(fontWeight: FontWeight.bold),
                         tabs: const [
                           Tab(text: 'Login'),
@@ -179,7 +494,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
                     // Tab View area
                     SizedBox(
-                      height: 400,
+                      height: 440,
                       child: TabBarView(
                         controller: _tabController,
                         children: [
@@ -193,7 +508,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                   controller: _loginEmailController,
                                   decoration: const InputDecoration(
                                     labelText: 'Email Address',
-                                    prefixIcon: Icon(Icons.email_outlined, color: Colors.grey),
+                                    prefixIcon: Icon(Icons.email_outlined, color: AppColors.textMuted),
                                   ),
                                   validator: (v) => (v == null || v.isEmpty) ? 'Please enter your email' : null,
                                 ),
@@ -203,54 +518,86 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                   obscureText: true,
                                   decoration: const InputDecoration(
                                     labelText: 'Password',
-                                    prefixIcon: Icon(Icons.lock_outline, color: Colors.grey),
+                                    prefixIcon: Icon(Icons.lock_outline, color: AppColors.textMuted),
                                   ),
                                   validator: (v) => (v == null || v.isEmpty) ? 'Please enter password' : null,
                                 ),
                                 const SizedBox(height: 32),
-                                authProvider.isLoading
-                                    ? const Center(child: CircularProgressIndicator(color: Color(0xFF7828B4)))
-                                    : ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFF7828B4),
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(vertical: 16),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                        ),
-                                        onPressed: _handleLogin,
-                                        child: Text(
-                                          'Sign In',
-                                          style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
-                                        ),
-                                      ),
+                                AppButton(
+                                  text: 'Sign In',
+                                  style: AppButtonStyle.gradient,
+                                  isLoading: authProvider.isLoading,
+                                  onPressed: _handleLogin,
+                                  height: 52,
+                                ),
                               ],
                             ),
                           ),
 
-                          // Signup Form
+                          // Signup Form with Realtime Username Availability
                           Form(
                             key: _registerFormKey,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
+                                // Username Field with Live Indicator
                                 TextFormField(
                                   controller: _registerUsernameController,
-                                  decoration: const InputDecoration(
+                                  onChanged: _onUsernameChanged,
+                                  decoration: InputDecoration(
                                     labelText: 'Username',
-                                    prefixIcon: Icon(Icons.person_outline, color: Colors.grey),
+                                    prefixIcon: const Icon(Icons.person_outline, color: Colors.grey),
+                                    suffixIcon: _isCheckingUsername
+                                        ? const Padding(
+                                            padding: EdgeInsets.all(12.0),
+                                            child: SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Color(0xFF7828B4),
+                                              ),
+                                            ),
+                                          )
+                                        : _isUsernameAvailable == true
+                                            ? const Icon(Icons.check_circle, color: Colors.green)
+                                            : _isUsernameAvailable == false
+                                                ? const Icon(Icons.cancel, color: Colors.red)
+                                                : null,
                                   ),
-                                  validator: (v) => (v == null || v.isEmpty) ? 'Please enter username' : null,
+                                  validator: (v) {
+                                    if (v == null || v.trim().isEmpty) return 'Please enter username';
+                                    if (v.trim().length < 3) return 'Username must be 3+ characters';
+                                    if (_isUsernameAvailable == false) return 'Username is already taken';
+                                    return null;
+                                  },
                                 ),
+                                if (_usernameStatusMsg.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4, left: 12),
+                                    child: Text(
+                                      _usernameStatusMsg,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: _isUsernameAvailable == true ? Colors.green : Colors.redAccent,
+                                      ),
+                                    ),
+                                  ),
                                 const SizedBox(height: 12),
                                 TextFormField(
                                   controller: _registerEmailController,
+                                  keyboardType: TextInputType.emailAddress,
                                   decoration: const InputDecoration(
                                     labelText: 'Email Address',
                                     prefixIcon: Icon(Icons.email_outlined, color: Colors.grey),
                                   ),
-                                  validator: (v) => (v == null || v.isEmpty) ? 'Please enter email' : null,
+                                  validator: (v) {
+                                    if (v == null || v.trim().isEmpty) return 'Please enter email';
+                                    if (!RegExp(r'^\S+@\S+\.\S+$').hasMatch(v.trim())) {
+                                      return 'Please enter a valid email address';
+                                    }
+                                    return null;
+                                  },
                                 ),
                                 const SizedBox(height: 12),
                                 TextFormField(
@@ -284,23 +631,13 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                   },
                                 ),
                                 const SizedBox(height: 24),
-                                authProvider.isLoading
-                                    ? const Center(child: CircularProgressIndicator(color: Color(0xFF7828B4)))
-                                    : ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFF7828B4),
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(vertical: 16),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                        ),
-                                        onPressed: _handleRegister,
-                                        child: Text(
-                                          'Sign Up',
-                                          style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
-                                        ),
-                                      ),
+                                 AppButton(
+                                  text: 'Verify Email & Register',
+                                  style: AppButtonStyle.gradient,
+                                  isLoading: authProvider.isLoading,
+                                  onPressed: _handleRegisterInitiate,
+                                  height: 52,
+                                ),
                               ],
                             ),
                           ),

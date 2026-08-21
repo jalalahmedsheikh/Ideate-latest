@@ -1,14 +1,24 @@
 import { Notification } from "../models/notification.model.js";
 
-// ─── GET /notifications — fetch all for logged-in user ──────────────────────
+// ─── GET /notifications — fetch for logged-in user ──────────────────────
 export const getNotifications = async (req, res) => {
   try {
     const userId = req.id;
     const page  = Math.max(parseInt(req.query.page)  || 1, 1);
     const limit = Math.min(parseInt(req.query.limit) || 30, 50);
     const skip  = (page - 1) * limit;
+    const category = req.query.category; // 'followers' | 'activity' | 'system'
 
-    const notifications = await Notification.find({ recipient: userId })
+    let queryFilter = { recipient: userId };
+    if (category === 'followers') {
+      queryFilter.type = { $in: ["follow", "follow_request", "follow_accept"] };
+    } else if (category === 'activity') {
+      queryFilter.type = { $in: ["like", "dislike", "comment", "vote"] };
+    } else if (category === 'system') {
+      queryFilter.type = { $in: ["mention"] };
+    }
+
+    const notifications = await Notification.find(queryFilter)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -16,10 +26,32 @@ export const getNotifications = async (req, res) => {
 
     const unreadCount = await Notification.countDocuments({ recipient: userId, isRead: false });
 
+    // Category breakdown counts
+    const followerTypes = ["follow", "follow_request", "follow_accept"];
+    const activityTypes = ["like", "dislike", "comment", "vote"];
+    const systemTypes = ["mention"];
+
+    const followersUnread = await Notification.countDocuments({ recipient: userId, isRead: false, type: { $in: followerTypes } });
+    const activityUnread = await Notification.countDocuments({ recipient: userId, isRead: false, type: { $in: activityTypes } });
+    const systemUnread = await Notification.countDocuments({ recipient: userId, isRead: false, type: { $in: systemTypes } });
+
+    // Latest notification snippet per category
+    const latestFollower = await Notification.findOne({ recipient: userId, type: { $in: followerTypes } }).sort({ createdAt: -1 }).lean();
+    const latestActivity = await Notification.findOne({ recipient: userId, type: { $in: activityTypes } }).sort({ createdAt: -1 }).lean();
+    const latestSystem = await Notification.findOne({ recipient: userId, type: { $in: systemTypes } }).sort({ createdAt: -1 }).lean();
+
     return res.status(200).json({
       success: true,
       notifications,
       unreadCount,
+      categories: {
+        followersUnread,
+        activityUnread,
+        systemUnread,
+        latestFollower,
+        latestActivity,
+        latestSystem,
+      },
       page,
     });
   } catch (error) {

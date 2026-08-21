@@ -187,12 +187,21 @@ const emailWorker = new Worker(
 // ─────────────────────────────────────────────────────────────
 // ERROR HANDLING
 // ─────────────────────────────────────────────────────────────
+let lastWorkerErrorTime = 0;
 [notificationWorker, feedWorker, trendingWorker, emailWorker].forEach((worker) => {
   worker.on("failed", (job, err) => {
     console.error(`Worker job ${job?.id ?? "unknown"} failed:`, err.message);
   });
   worker.on("error", (err) => {
-    console.error("Worker system error:", err.message);
+    const now = Date.now();
+    if (now - lastWorkerErrorTime > 15000) {
+      lastWorkerErrorTime = now;
+      if (err.message.includes("ECONNREFUSED")) {
+        console.warn("⚠️ Worker system: waiting for Redis connection...");
+      } else {
+        console.error("Worker system error:", err.message);
+      }
+    }
   });
 });
 

@@ -13,10 +13,28 @@ class CommentModel {
     required this.createdAt,
   });
 
-  factory CommentModel.fromJson(Map<String, dynamic> json) {
+  factory CommentModel.fromJson(dynamic json) {
+    if (json is! Map<String, dynamic>) {
+      return CommentModel(
+        id: json?.toString() ?? '',
+        content: '',
+        author: UserModel(
+          id: '',
+          username: 'User',
+          email: '',
+          category: 'User',
+          followers: [],
+          followings: [],
+          posts: [],
+          bookmarks: [],
+          isverified: false,
+        ),
+        createdAt: DateTime.now(),
+      );
+    }
     return CommentModel(
       id: json['_id'] ?? json['id'] ?? '',
-      content: json['content'] ?? '',
+      content: json['text'] ?? json['content'] ?? '',
       author: json['author'] is Map<String, dynamic>
           ? UserModel.fromJson(json['author'])
           : UserModel(

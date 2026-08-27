@@ -2,24 +2,27 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../models/user_model.dart';
 import '../models/post_model.dart';
 import '../models/poll_model.dart';
+import '../models/topic_model.dart';
+import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
 import '../widgets/post_card.dart';
 import '../widgets/poll_card.dart';
+import '../widgets/auth_prompt_sheet.dart';
 import 'other_profile.dart';
+import 'topic_screen.dart';
 import '../utils/app_colors.dart';
-import '../widgets/custom_button.dart';
 
-// ─────────────────────────────────────────────
-// Data classes
-// ─────────────────────────────────────────────
 class _Suggestion {
-  final String type; // 'user' | 'post' | 'poll'
+  final String type; // 'user' | 'post' | 'poll' | 'topic'
   final String id;
   final String label;
   final String? profileImage;
+  final String? slug;
+  final String? icon;
   final bool isverified;
 
   _Suggestion({
@@ -27,6 +30,8 @@ class _Suggestion {
     required this.id,
     required this.label,
     this.profileImage,
+    this.slug,
+    this.icon,
     this.isverified = false,
   });
 
@@ -35,13 +40,12 @@ class _Suggestion {
         id: j['id']?.toString() ?? '',
         label: j['label'] ?? '',
         profileImage: j['profileImage'],
+        slug: j['slug'],
+        icon: j['icon'],
         isverified: j['isverified'] ?? false,
       );
 }
 
-// ─────────────────────────────────────────────
-// Screen
-// ─────────────────────────────────────────────
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -51,20 +55,16 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen>
     with SingleTickerProviderStateMixin {
-  // Controllers
   final _searchController = TextEditingController();
   final _focusNode = FocusNode();
 
-  // Tab controller (created after search)
-  TabController? _tabController;
+  late TabController _tabController;
 
-  // State
   String _query = '';
   bool _hasSearched = false;
   bool _isSearching = false;
   bool _showSuggestions = false;
 
-  // Suggestion state
   List<_Suggestion> _suggestions = [];
   bool _loadingSuggestions = false;
   Timer? _debounce;
@@ -73,17 +73,14 @@ class _SearchScreenState extends State<SearchScreen>
   List<UserModel> _users = [];
   List<PostModel> _posts = [];
   List<PollModel> _polls = [];
+  List<TopicModel> _topics = [];
 
-  // ── constants ──────────────────────────────
-  static const _purple = AppColors.primary;
-  static const _bg = AppColors.background;
-  static const _card = AppColors.cardBackground;
-  static const _border = AppColors.border;
+  final Set<String> _followingUserIds = {};
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
     });
@@ -96,24 +93,30 @@ class _SearchScreenState extends State<SearchScreen>
     _searchController.removeListener(_onQueryChanged);
     _searchController.dispose();
     _focusNode.dispose();
-    _tabController?.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
-  // ── query change → debounced suggestions ───
   void _onQueryChanged() {
     final text = _searchController.text.trim();
-    setState(() {
-      _query = text;
-      _showSuggestions = text.isNotEmpty && !_hasSearched;
-    });
+    if (text == _query) return;
+    _query = text;
 
-    _debounce?.cancel();
     if (text.isEmpty) {
-      setState(() => _suggestions = []);
+      setState(() {
+        _suggestions = [];
+        _showSuggestions = false;
+        _hasSearched = false;
+        _users = [];
+        _posts = [];
+        _polls = [];
+        _topics = [];
+      });
       return;
     }
-    _debounce = Timer(const Duration(milliseconds: 280), () {
+
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
       _fetchSuggestions(text);
     });
   }
@@ -121,561 +124,278 @@ class _SearchScreenState extends State<SearchScreen>
   Future<void> _fetchSuggestions(String q) async {
     setState(() => _loadingSuggestions = true);
     try {
-      final res = await ApiService.get('/search/suggest?q=${Uri.encodeComponent(q)}');
+      final res = await ApiService.get('/search/suggestions?q=${Uri.encodeComponent(q)}');
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
-        final list = (data['suggestions'] as List? ?? [])
-            .map((e) => _Suggestion.fromJson(e))
-            .toList();
-        if (mounted) setState(() => _suggestions = list);
+        if (data['success'] == true && data['suggestions'] != null) {
+          final list = (data['suggestions'] as List)
+              .map((s) => _Suggestion.fromJson(s))
+              .toList();
+          setState(() {
+            _suggestions = list;
+            _showSuggestions = list.isNotEmpty && !_hasSearched;
+          });
+        }
       }
-    } catch (_) {}
-    if (mounted) setState(() => _loadingSuggestions = false);
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _loadingSuggestions = false);
+    }
   }
 
-  // ── full search ─────────────────────────────
-  Future<void> _doSearch(String q) async {
-    final query = q.trim();
-    if (query.isEmpty) return;
+  Future<void> _performSearch([String? overrideQuery]) async {
+    final q = (overrideQuery ?? _searchController.text).trim();
+    if (q.isEmpty) return;
 
     _focusNode.unfocus();
     setState(() {
-      _query = query;
-      _hasSearched = true;
-      _showSuggestions = false;
       _isSearching = true;
-      _users = [];
-      _posts = [];
-      _polls = [];
+      _showSuggestions = false;
+      _hasSearched = true;
     });
 
     try {
-      final res =
-          await ApiService.get('/search?q=${Uri.encodeComponent(query)}');
+      final res = await ApiService.get('/search?q=${Uri.encodeComponent(q)}&type=all');
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
-        final results = data['results'] as Map<String, dynamic>? ?? {};
+        if (data['success'] == true && data['results'] != null) {
+          final r = data['results'];
+          final users = ((r['users'] ?? []) as List).map((u) => UserModel.fromJson(u)).toList();
+          final posts = ((r['posts'] ?? []) as List).map((p) => PostModel.fromJson(p)).toList();
+          final polls = ((r['polls'] ?? []) as List).map((p) => PollModel.fromJson(p)).toList();
+          final topics = ((r['topics'] ?? []) as List).map((t) => TopicModel.fromJson(t)).toList();
 
-        final users = (results['users'] as List? ?? [])
-            .map((u) => UserModel.fromJson(u))
-            .toList();
-        final posts = (results['posts'] as List? ?? [])
-            .map((p) => PostModel.fromJson(p))
-            .toList();
-        final polls = (results['polls'] as List? ?? [])
-            .map((p) => PollModel.fromJson(p))
-            .toList();
-
-        if (mounted) {
           setState(() {
             _users = users;
             _posts = posts;
             _polls = polls;
+            _topics = topics;
+            for (var u in users) {
+              if (u.toJson()['isFollowing'] == true) {
+                _followingUserIds.add(u.id);
+              }
+            }
           });
         }
       }
     } catch (e) {
-      debugPrint('Search error: $e');
+      debugPrint("Search error: $e");
+    } finally {
+      if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
+  Future<void> _toggleUserFollow(UserModel user) async {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    if (!auth.isAuthenticated) {
+      AuthPrompt.show(
+        context,
+        title: 'Follow User',
+        message: 'Log in to follow creators.',
+        icon: Icons.person_add_rounded,
+      );
+      return;
     }
 
-    if (mounted) setState(() => _isSearching = false);
-  }
-
-  void _clearSearch() {
-    _searchController.clear();
+    final isFollowing = _followingUserIds.contains(user.id);
     setState(() {
-      _query = '';
-      _hasSearched = false;
-      _showSuggestions = false;
-      _suggestions = [];
-      _users = [];
-      _posts = [];
-      _polls = [];
+      if (isFollowing) {
+        _followingUserIds.remove(user.id);
+      } else {
+        _followingUserIds.add(user.id);
+      }
     });
-    _focusNode.requestFocus();
+
+    try {
+      final response = await ApiService.post('/user/toggleFollow', {'targetUserId': user.id});
+      if (response.statusCode != 200) {
+        setState(() {
+          if (isFollowing) {
+            _followingUserIds.add(user.id);
+          } else {
+            _followingUserIds.remove(user.id);
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint("Follow error: $e");
+    }
   }
 
-  // ─────────────────────────────────────────────
-  // BUILD
-  // ─────────────────────────────────────────────
+  Future<void> _toggleTopicFollow(TopicModel topic) async {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    if (!auth.isAuthenticated) {
+      AuthPrompt.show(
+        context,
+        title: 'Follow Topic',
+        message: 'Log in to follow topics.',
+        icon: Icons.tag_rounded,
+      );
+      return;
+    }
+
+    final prevIsFollowing = topic.isFollowing;
+    setState(() {
+      final idx = _topics.indexWhere((t) => t.id == topic.id);
+      if (idx != -1) {
+        _topics[idx] = topic.copyWith(
+          isFollowing: !prevIsFollowing,
+          followerCount: prevIsFollowing ? topic.followerCount - 1 : topic.followerCount + 1,
+        );
+      }
+    });
+
+    try {
+      final response = await ApiService.post('/topic/${topic.id}/toggleFollow', {});
+      if (response.statusCode != 200) {
+        setState(() {
+          final idx = _topics.indexWhere((t) => t.id == topic.id);
+          if (idx != -1) {
+            _topics[idx] = topic.copyWith(
+              isFollowing: prevIsFollowing,
+              followerCount: topic.followerCount,
+            );
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _bg,
-      appBar: _buildAppBar(),
-      body: Stack(
-        children: [
-          // Main content
-          _hasSearched
-              ? _buildResultsView()
-              : _buildEmptyState(),
-
-          // Live suggestion overlay
-          if (_showSuggestions && _suggestions.isNotEmpty)
-            _buildSuggestionOverlay(),
-        ],
-      ),
-    );
-  }
-
-  // ── AppBar with search field ───────────────
-  AppBar _buildAppBar() {
-    return AppBar(
-      backgroundColor: _bg,
-      elevation: 0,
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 20),
-        onPressed: () => Navigator.of(context).pop(),
-      ),
-      title: Container(
-        height: 44,
-        decoration: BoxDecoration(
-          color: _card,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _border),
-        ),
-        child: TextField(
-          controller: _searchController,
-          focusNode: _focusNode,
-          style: GoogleFonts.inter(color: Colors.white, fontSize: 15),
-          cursorColor: _purple,
-          textInputAction: TextInputAction.search,
-          onSubmitted: _doSearch,
-          decoration: InputDecoration(
-            hintText: 'Search users, posts, polls…',
-            hintStyle: GoogleFonts.inter(
-              color: const Color(0xFF8D8D99),
-              fontSize: 14,
-            ),
-            prefixIcon: const Icon(Icons.search, color: Color(0xFF8D8D99), size: 20),
-            suffixIcon: _query.isNotEmpty
-                ? GestureDetector(
-                    onTap: _clearSearch,
-                    child: const Icon(Icons.close, color: Color(0xFF8D8D99), size: 18),
-                  )
-                : null,
-            border: InputBorder.none,
-            contentPadding: const EdgeInsets.symmetric(vertical: 12),
-          ),
-          onChanged: (v) {
-            // handled by listener
-            if (_hasSearched) {
-              setState(() => _hasSearched = false);
-            }
-          },
-        ),
-      ),
-      actions: [
-        if (_query.isNotEmpty)
-          TextButton(
-            onPressed: () => _doSearch(_query),
-            child: Text(
-              'Search',
-              style: GoogleFonts.inter(
-                color: _purple,
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-              ),
-            ),
-          ),
-      ],
-      bottom: _hasSearched
-          ? TabBar(
-              controller: _tabController,
-              indicatorColor: _purple,
-              indicatorWeight: 3,
-              labelColor: Colors.white,
-              unselectedLabelColor: const Color(0xFF8D8D99),
-              labelStyle: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 13),
-              unselectedLabelStyle: GoogleFonts.inter(fontSize: 13),
-              tabs: [
-                Tab(text: 'All (${_users.length + _posts.length + _polls.length})'),
-                Tab(text: 'Users (${_users.length})'),
-                Tab(text: 'Posts (${_posts.length})'),
-                Tab(text: 'Polls (${_polls.length})'),
-              ],
-            )
-          : null,
-    );
-  }
-
-  // ── empty / idle state ────────────────────
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.search_rounded, size: 72, color: Colors.white.withOpacity(0.08)),
-          const SizedBox(height: 16),
-          Text(
-            'Discover Ideate',
-            style: GoogleFonts.outfit(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.white.withOpacity(0.6),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Search for users, posts, polls & more',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              color: Colors.white.withOpacity(0.3),
-            ),
-          ),
-          const SizedBox(height: 32),
-          _buildSearchTag(Icons.person_outline, 'Find people'),
-          _buildSearchTag(Icons.article_outlined, 'Browse posts'),
-          _buildSearchTag(Icons.poll_outlined, 'Explore polls'),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchTag(IconData icon, String label) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: InkWell(
-        onTap: () {
-          _searchController.text = label.split(' ').last;
-          _doSearch(label.split(' ').last);
-        },
-        borderRadius: BorderRadius.circular(30),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: BoxDecoration(
-            color: _card,
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: _border),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 16, color: _purple),
-              const SizedBox(width: 8),
-              Text(label, style: GoogleFonts.inter(color: Colors.white70, fontSize: 13)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── suggestion overlay ────────────────────
-  Widget _buildSuggestionOverlay() {
-    return Positioned(
-      top: 0,
-      left: 0,
-      right: 0,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12),
-        constraints: const BoxConstraints(maxHeight: 280),
-        decoration: BoxDecoration(
-          color: _card,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _border),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.4),
-              blurRadius: 20,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: _loadingSuggestions
-            ? const Padding(
-                padding: EdgeInsets.all(20),
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Color(0xFF7828B4),
-                    ),
-                  ),
-                ),
-              )
-            : ListView.separated(
-                shrinkWrap: true,
-                itemCount: _suggestions.length,
-                separatorBuilder: (_, __) =>
-                    Divider(height: 1, color: _border),
-                itemBuilder: (ctx, i) => _buildSuggestionTile(_suggestions[i]),
-              ),
-      ),
-    );
-  }
-
-  Widget _buildSuggestionTile(_Suggestion s) {
-    IconData icon;
-    Color iconColor;
-    switch (s.type) {
-      case 'user':
-        icon = Icons.person;
-        iconColor = _purple;
-        break;
-      case 'poll':
-        icon = Icons.poll;
-        iconColor = const Color(0xFF2196F3);
-        break;
-      default:
-        icon = Icons.article;
-        iconColor = const Color(0xFF4CAF50);
-    }
-
-    return InkWell(
-      onTap: () {
-        _searchController.text = s.label.replaceAll('@', '');
-        _doSearch(s.label.replaceAll('@', ''));
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            if (s.type == 'user' && s.profileImage != null)
-              CircleAvatar(
-                radius: 16,
-                backgroundImage: NetworkImage(s.profileImage!),
-              )
-            else
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, size: 16, color: iconColor),
-              ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                s.label,
-                style: GoogleFonts.inter(color: Colors.white, fontSize: 14),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            Icon(Icons.north_west, size: 14, color: Colors.white.withOpacity(0.3)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── results view (tabbed) ──────────────────
-  Widget _buildResultsView() {
-    if (_isSearching) {
-      return const Center(
-        child: CircularProgressIndicator(color: Color(0xFF7828B4)),
-      );
-    }
-
-    final allEmpty = _users.isEmpty && _posts.isEmpty && _polls.isEmpty;
-    if (allEmpty) {
-      return Center(
+      backgroundColor: AppColors.background,
+      body: SafeArea(
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.search_off_rounded,
-                size: 64, color: Colors.white.withOpacity(0.1)),
-            const SizedBox(height: 16),
-            Text(
-              'No results for "$_query"',
-              style: GoogleFonts.inter(
-                fontSize: 16,
-                color: Colors.white.withOpacity(0.5),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return TabBarView(
-      controller: _tabController,
-      children: [
-        _buildAllTab(),
-        _buildUsersTab(),
-        _buildPostsTab(),
-        _buildPollsTab(),
-      ],
-    );
-  }
-
-  // ── ALL tab ───────────────────────────────
-  Widget _buildAllTab() {
-    return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      children: [
-        if (_users.isNotEmpty) ...[
-          _sectionHeader('People', Icons.person, _users.length),
-          ..._users.take(3).map(_buildUserTile),
-          if (_users.length > 3)
-            _viewMoreButton('View all ${_users.length} users', () {
-              _tabController?.animateTo(1);
-            }),
-          const SizedBox(height: 8),
-        ],
-        if (_posts.isNotEmpty) ...[
-          _sectionHeader('Posts', Icons.article, _posts.length),
-          ..._posts.take(2).map((p) => PostCard(
-                post: p,
-                onRefresh: () => _doSearch(_query),
-              )),
-          if (_posts.length > 2)
-            _viewMoreButton('View all ${_posts.length} posts', () {
-              _tabController?.animateTo(2);
-            }),
-          const SizedBox(height: 8),
-        ],
-        if (_polls.isNotEmpty) ...[
-          _sectionHeader('Polls', Icons.poll, _polls.length),
-          ..._polls.take(2).map((p) => PollCard(
-                poll: p,
-                onRefresh: () => _doSearch(_query),
-              )),
-          if (_polls.length > 2)
-            _viewMoreButton('View all ${_polls.length} polls', () {
-              _tabController?.animateTo(3);
-            }),
-        ],
-      ],
-    );
-  }
-
-  // ── USERS tab ─────────────────────────────
-  Widget _buildUsersTab() {
-    if (_users.isEmpty) return _emptyTab('No users found', Icons.person_off_outlined);
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      itemCount: _users.length,
-      separatorBuilder: (_, __) => Divider(height: 1, color: _border),
-      itemBuilder: (_, i) => _buildUserTile(_users[i]),
-    );
-  }
-
-  // ── POSTS tab ─────────────────────────────
-  Widget _buildPostsTab() {
-    if (_posts.isEmpty) return _emptyTab('No posts found', Icons.article_outlined);
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      itemCount: _posts.length,
-      itemBuilder: (_, i) => PostCard(
-        post: _posts[i],
-        onRefresh: () => _doSearch(_query),
-      ),
-    );
-  }
-
-  // ── POLLS tab ─────────────────────────────
-  Widget _buildPollsTab() {
-    if (_polls.isEmpty) return _emptyTab('No polls found', Icons.poll_outlined);
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      itemCount: _polls.length,
-      itemBuilder: (_, i) => PollCard(
-        poll: _polls[i],
-        onRefresh: () => _doSearch(_query),
-      ),
-    );
-  }
-
-  // ── shared helpers ────────────────────────
-  Widget _buildUserTile(UserModel u) {
-    return InkWell(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => OtherProfileScreen(userId: u.id),
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 24,
-              backgroundColor: _card,
-              backgroundImage:
-                  u.profileImage != null ? NetworkImage(u.profileImage!) : null,
-              child: u.profileImage == null
-                  ? const Icon(Icons.person, color: Colors.white38, size: 26)
-                  : null,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            // Search Input Header
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Text(
-                        u.username,
-                        style: GoogleFonts.inter(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                        ),
-                      ),
-                      if (u.isverified) ...[
-                        const SizedBox(width: 4),
-                        const Icon(Icons.verified, color: Colors.blue, size: 15),
-                      ],
-                    ],
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+                    onPressed: () => Navigator.pop(context),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    u.category,
-                    style: GoogleFonts.inter(
-                      color: const Color(0xFF8D8D99),
-                      fontSize: 12,
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      focusNode: _focusNode,
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: (_) => _performSearch(),
+                      style: GoogleFonts.inter(color: AppColors.textPrimary),
+                      decoration: InputDecoration(
+                        hintText: 'Search people, ideas, polls, topics...',
+                        prefixIcon: const Icon(Icons.search_rounded, color: AppColors.textSecondary),
+                        suffixIcon: _searchController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, color: AppColors.textSecondary),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  _onQueryChanged();
+                                },
+                              )
+                            : null,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      ),
                     ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.search_rounded, color: AppColors.primary),
+                    onPressed: () => _performSearch(),
                   ),
                 ],
               ),
             ),
-            Text(
-              '${u.followers.length} followers',
-              style: GoogleFonts.inter(
-                color: Colors.white38,
-                fontSize: 12,
+
+            // Tab Bar when searched
+            if (_hasSearched)
+              TabBar(
+                controller: _tabController,
+                isScrollable: true,
+                indicatorColor: AppColors.primary,
+                labelColor: AppColors.primary,
+                unselectedLabelColor: AppColors.textSecondary,
+                labelStyle: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 13),
+                tabs: [
+                  const Tab(text: 'All'),
+                  Tab(text: 'People (${_users.length})'),
+                  Tab(text: 'Posts (${_posts.length})'),
+                  Tab(text: 'Polls (${_polls.length})'),
+                  Tab(text: 'Topics (${_topics.length})'),
+                ],
               ),
+
+            // Body
+            Expanded(
+              child: _isSearching
+                  ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                  : _showSuggestions
+                      ? _buildSuggestionsList()
+                      : _hasSearched
+                          ? TabBarView(
+                              controller: _tabController,
+                              children: [
+                                _buildAllTab(),
+                                _buildUsersTab(),
+                                _buildPostsTab(),
+                                _buildPollsTab(),
+                                _buildTopicsTab(),
+                              ],
+                            )
+                          : _buildInitialPlaceholder(),
             ),
-            const SizedBox(width: 4),
-            const Icon(Icons.chevron_right, color: Colors.white24, size: 18),
           ],
         ),
       ),
     );
   }
 
-  Widget _sectionHeader(String title, IconData icon, int count) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Row(
+  Widget _buildSuggestionsList() {
+    return ListView.builder(
+      itemCount: _suggestions.length,
+      itemBuilder: (context, index) {
+        final s = _suggestions[index];
+        IconData icon = Icons.search;
+        if (s.type == 'user') icon = Icons.person_outline;
+        if (s.type == 'poll') icon = Icons.poll_outlined;
+        if (s.type == 'post') icon = Icons.article_outlined;
+        if (s.type == 'topic') icon = Icons.tag_rounded;
+
+        return ListTile(
+          leading: Icon(icon, color: AppColors.primary),
+          title: Text(s.label, style: GoogleFonts.inter(color: AppColors.textPrimary)),
+          onTap: () {
+            _searchController.text = s.label.replaceAll('@', '').replaceAll('#', '');
+            _performSearch(_searchController.text);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildInitialPlaceholder() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 16, color: _purple),
-          const SizedBox(width: 8),
+          const Icon(Icons.search_rounded, size: 54, color: AppColors.borderLight),
+          const SizedBox(height: 12),
           Text(
-            title,
+            'Explore Ideate',
             style: GoogleFonts.outfit(
-              color: Colors.white,
+              fontSize: 18,
               fontWeight: FontWeight.bold,
-              fontSize: 15,
+              color: AppColors.textPrimary,
             ),
           ),
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: BoxDecoration(
-              color: _purple.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              '$count',
-              style: GoogleFonts.inter(color: _purple, fontSize: 11, fontWeight: FontWeight.bold),
+          const SizedBox(height: 4),
+          Text(
+            'Search for creators, topics, opinions, and discussions.',
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              color: AppColors.textSecondary,
             ),
           ),
         ],
@@ -683,36 +403,239 @@ class _SearchScreenState extends State<SearchScreen>
     );
   }
 
-  Widget _viewMoreButton(String label, VoidCallback onTap) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: TextButton(
-        onPressed: onTap,
-        style: TextButton.styleFrom(
-          backgroundColor: _card,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-            side: BorderSide(color: _border),
-          ),
-        ),
+  Widget _buildAllTab() {
+    final hasNoResults = _users.isEmpty && _posts.isEmpty && _polls.isEmpty && _topics.isEmpty;
+
+    if (hasNoResults) {
+      return Center(
         child: Text(
-          label,
-          style: GoogleFonts.inter(color: _purple, fontSize: 13),
+          'No results found for "$_query"',
+          style: GoogleFonts.inter(color: AppColors.textSecondary),
         ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      children: [
+        if (_topics.isNotEmpty) ...[
+          _sectionHeader('Topics', 4),
+          ..._topics.take(3).map((t) => _buildTopicTile(t)),
+          const SizedBox(height: 12),
+        ],
+        if (_users.isNotEmpty) ...[
+          _sectionHeader('People', 1),
+          ..._users.take(3).map((u) => _buildUserTile(u)),
+          const SizedBox(height: 12),
+        ],
+        if (_posts.isNotEmpty) ...[
+          _sectionHeader('Posts', 2),
+          ..._posts.take(3).map((p) => PostCard(post: p)),
+          const SizedBox(height: 12),
+        ],
+        if (_polls.isNotEmpty) ...[
+          _sectionHeader('Polls', 3),
+          ..._polls.take(3).map((p) => PollCard(poll: p)),
+          const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+
+  Widget _sectionHeader(String title, int tabIndex) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.outfit(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          InkWell(
+            onTap: () => _tabController.animateTo(tabIndex),
+            child: Text(
+              'See all',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.primary,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _emptyTab(String message, IconData icon) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildUsersTab() {
+    if (_users.isEmpty) {
+      return Center(child: Text('No users found.', style: GoogleFonts.inter(color: AppColors.textSecondary)));
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      itemCount: _users.length,
+      itemBuilder: (ctx, idx) => _buildUserTile(_users[idx]),
+    );
+  }
+
+  Widget _buildTopicsTab() {
+    if (_topics.isEmpty) {
+      return Center(child: Text('No topics found.', style: GoogleFonts.inter(color: AppColors.textSecondary)));
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      itemCount: _topics.length,
+      itemBuilder: (ctx, idx) => _buildTopicTile(_topics[idx]),
+    );
+  }
+
+  Widget _buildPostsTab() {
+    if (_posts.isEmpty) {
+      return Center(child: Text('No posts found.', style: GoogleFonts.inter(color: AppColors.textSecondary)));
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: _posts.length,
+      itemBuilder: (ctx, idx) => PostCard(post: _posts[idx]),
+    );
+  }
+
+  Widget _buildPollsTab() {
+    if (_polls.isEmpty) {
+      return Center(child: Text('No polls found.', style: GoogleFonts.inter(color: AppColors.textSecondary)));
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: _polls.length,
+      itemBuilder: (ctx, idx) => PollCard(poll: _polls[idx]),
+    );
+  }
+
+  Widget _buildUserTile(UserModel user) {
+    final isFollowing = _followingUserIds.contains(user.id);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
         children: [
-          Icon(icon, size: 52, color: Colors.white.withOpacity(0.1)),
-          const SizedBox(height: 12),
-          Text(
-            message,
-            style: GoogleFonts.inter(color: Colors.white38, fontSize: 15),
+          CircleAvatar(
+            radius: 20,
+            backgroundImage: user.profileImage != null && user.profileImage!.isNotEmpty
+                ? NetworkImage(user.profileImage!)
+                : null,
+            child: user.profileImage == null ? const Icon(Icons.person, size: 20) : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: InkWell(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => OtherProfileScreen(userId: user.id)),
+                );
+              },
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    user.username,
+                    style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                  ),
+                  Text(
+                    user.category,
+                    style: GoogleFonts.inter(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => _toggleUserFollow(user),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isFollowing ? AppColors.surface : AppColors.primary,
+              foregroundColor: isFollowing ? AppColors.textPrimary : Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: BorderSide(color: isFollowing ? AppColors.border : Colors.transparent),
+              ),
+            ),
+            child: Text(isFollowing ? 'Following' : 'Follow', style: const TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopicTile(TopicModel topic) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Text(topic.icon, style: const TextStyle(fontSize: 18)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: InkWell(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => TopicScreen(slug: topic.slug, initialTopic: topic),
+                  ),
+                );
+              },
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '#${topic.name}',
+                    style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                  ),
+                  Text(
+                    '${topic.followerCount} followers • ${topic.category}',
+                    style: GoogleFonts.inter(fontSize: 11, color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => _toggleTopicFollow(topic),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: topic.isFollowing ? AppColors.surface : AppColors.primary,
+              foregroundColor: topic.isFollowing ? AppColors.textPrimary : Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: BorderSide(color: topic.isFollowing ? AppColors.border : Colors.transparent),
+              ),
+            ),
+            child: Text(topic.isFollowing ? 'Following' : 'Follow', style: const TextStyle(fontSize: 12)),
           ),
         ],
       ),

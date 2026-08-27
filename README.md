@@ -123,3 +123,4 @@ The mobile application is a cross-platform application for iOS and Android.
 - **Background Task Processing:** Powered by **BullMQ** and **Redis** to asynchronously calculate trending feeds, updates, and clean up logs without blocking main request threads.
 - **Smart AI Recommendations:** Integrated with **Google Gemini AI** (`@google/generative-ai`) to serve personalized feeds, automated content moderation, and suggestions.
 - **Media Optimization:** Direct integration with **Cloudinary** for scalable, high-performance image uploads and avatar rendering.
+

@@ -7,6 +7,7 @@ import { io } from "../socket/socket.js";
 import nodemailer from "nodemailer";
 import { computeScore } from "../controllers/TrendingPostsPolls.controller.js";
 import { createAndPushNotification } from "../controllers/notification.controller.js";
+import { getUserInterestVector } from "../ai/features/featureStore.js";
 
 // ─────────────────────────────────────────────────────────────
 // 1. NOTIFICATION WORKER — persists to DB + pushes via socket
@@ -114,38 +115,78 @@ const feedWorker = new Worker(
 const trendingWorker = new Worker(
   "trending",
   async (job) => {
-    console.log("🔄 Recalculating trending feed...");
+    console.log("🔄 Recalculating trending feed & processing expirations...");
+
+    const now = new Date();
+
+    // ── 1. Auto-close expired Polls & Debates ──────────────────────
+    try {
+      const { Question } = await import("../models/question.model.js");
+      const { Debate } = await import("../models/debate.model.js");
+
+      await Promise.all([
+        Poll.updateMany({ status: "open", end: { $lte: now } }, { status: "closed" }),
+        Debate.updateMany({ status: "active", deadline: { $lte: now } }, { status: "closed" }),
+      ]);
+    } catch (expErr) {
+      console.warn("⚠️ Expiration check warning:", expErr.message);
+    }
 
     const restrictedUsers = await User.find({
       $or: [{ isBanned: true }, { isShadowBanned: true }],
     }).select("_id").lean();
     const restrictedIds = restrictedUsers.map((u) => u._id);
 
-    const [posts, polls] = await Promise.all([
+    const { Question } = await import("../models/question.model.js");
+    const { Debate } = await import("../models/debate.model.js");
+
+    const [posts, polls, questions, debates] = await Promise.all([
       Post.find({ author: { $nin: restrictedIds }, status: "active" })
         .sort({ createdAt: -1 })
-        .limit(300)
-        .populate({ path: "author", select: "username profileImage isverified" })
+        .limit(200)
+        .populate({ path: "author", select: "username name profileImage isverified reputationScore" })
         .populate({
           path: "comments",
-          options: { limit: 10 },
+          options: { limit: 5 },
           populate: { path: "author", select: "username profileImage" },
         })
         .lean(),
 
       Poll.find({ author: { $nin: restrictedIds }, status: "open" })
         .sort({ createdAt: -1 })
-        .limit(300)
-        .populate({ path: "author", select: "username profileImage isverified" })
+        .limit(200)
+        .populate({ path: "author", select: "username name profileImage isverified" })
+        .lean(),
+
+      Question.find({ author: { $nin: restrictedIds }, status: "active" })
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .populate({ path: "author", select: "username name profileImage isverified reputationScore" })
+        .lean(),
+
+      Debate.find({ author: { $nin: restrictedIds }, status: "active" })
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .populate({ path: "author", select: "username name profileImage isverified reputationScore" })
         .lean(),
     ]);
 
     const scoredPosts = posts.map((p) => ({ ...p, feedType: "post", score: computeScore(p, "post") }));
     const scoredPolls = polls.map((p) => ({ ...p, feedType: "poll", score: computeScore(p, "poll") }));
+    const scoredQuestions = questions.map((q) => {
+      const answers = q.answersCount || 0;
+      const upvotes = q.upvotes?.length || 0;
+      return { ...q, feedType: "question", score: answers * 6 + upvotes * 3 + 20 };
+    });
+    const scoredDebates = debates.map((d) => {
+      const votes = d.totalVotes || 0;
+      const args = d.argumentsCount || 0;
+      return { ...d, feedType: "debate", score: votes * 4 + args * 7 + 25 };
+    });
 
-    const trendingContent = [...scoredPosts, ...scoredPolls]
+    const trendingContent = [...scoredPosts, ...scoredPolls, ...scoredQuestions, ...scoredDebates]
       .sort((a, b) => b.score - a.score)
-      .slice(0, 100);
+      .slice(0, 150);
 
     // Cache for 2 minutes (worker refreshes every 2 min so this stays fresh)
     await setCached("feed:trending", trendingContent, 120);
@@ -185,10 +226,25 @@ const emailWorker = new Worker(
 );
 
 // ─────────────────────────────────────────────────────────────
+// 5. ML WORKER — Background user interest vector recalculation
+// ─────────────────────────────────────────────────────────────
+const mlWorker = new Worker(
+  "ml_tasks",
+  async (job) => {
+    const { userId } = job.data;
+    if (userId) {
+      // Force recalculation and refresh cache
+      await getUserInterestVector(userId, true);
+    }
+  },
+  { connection: redis }
+);
+
+// ─────────────────────────────────────────────────────────────
 // ERROR HANDLING
 // ─────────────────────────────────────────────────────────────
 let lastWorkerErrorTime = 0;
-[notificationWorker, feedWorker, trendingWorker, emailWorker].forEach((worker) => {
+[notificationWorker, feedWorker, trendingWorker, emailWorker, mlWorker].forEach((worker) => {
   worker.on("failed", (job, err) => {
     console.error(`Worker job ${job?.id ?? "unknown"} failed:`, err.message);
   });
@@ -205,4 +261,4 @@ let lastWorkerErrorTime = 0;
   });
 });
 
-export default { notificationWorker, feedWorker, trendingWorker, emailWorker };
+export default { notificationWorker, feedWorker, trendingWorker, emailWorker, mlWorker };

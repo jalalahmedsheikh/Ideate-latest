@@ -310,6 +310,113 @@ export const login = async (req, res) => {
   }
 };
 
+// 2.5 Social Auth (Google / Facebook via Firebase) with MongoDB Atlas persistence
+export const socialAuth = async (req, res) => {
+  try {
+    const { email, name, profileImage, firebaseUid, authProvider = 'google' } = req.body;
+
+    if (!email || !firebaseUid) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and Firebase UID are required for social login.",
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const provider = ['google', 'facebook'].includes(authProvider.toLowerCase())
+      ? authProvider.toLowerCase()
+      : 'google';
+
+    // 1. Search for existing user by firebaseUid or email
+    let user = await User.findOne({
+      $or: [
+        { firebaseUid: firebaseUid },
+        { email: cleanEmail }
+      ]
+    });
+
+    if (user) {
+      // Check if user is banned
+      if (user.isBanned) {
+        return res.status(403).json({
+          success: false,
+          message: "Your account has been banned by an administrator.",
+        });
+      }
+
+      // Update social credentials / profile info if missing
+      let hasUpdates = false;
+      if (!user.firebaseUid) {
+        user.firebaseUid = firebaseUid;
+        hasUpdates = true;
+      }
+      if (provider === 'google' && !user.googleId) {
+        user.googleId = firebaseUid;
+        hasUpdates = true;
+      }
+      if (provider === 'facebook' && !user.facebookId) {
+        user.facebookId = firebaseUid;
+        hasUpdates = true;
+      }
+      if (!user.profileImage && profileImage) {
+        user.profileImage = profileImage;
+        hasUpdates = true;
+      }
+      if (!user.name && name) {
+        user.name = name;
+        hasUpdates = true;
+      }
+      if (hasUpdates) {
+        await user.save();
+      }
+
+      return await generateToken(res, user, `Welcome back ${user.username}`);
+    }
+
+    // 2. New User: Auto-generate a clean, unique username
+    let baseUsername = (name ? name.toLowerCase().replace(/[^a-z0-9_]/g, '_') : cleanEmail.split('@')[0].replace(/[^a-z0-9_]/g, '_')).slice(0, 15);
+    if (baseUsername.length < 3) {
+      baseUsername = `user_${baseUsername}`;
+    }
+
+    let uniqueUsername = baseUsername;
+    let counter = 1;
+    while (await User.findOne({ username: { $regex: new RegExp(`^${uniqueUsername}$`, 'i') } })) {
+      const suffix = Math.floor(1000 + Math.random() * 9000).toString();
+      uniqueUsername = `${baseUsername.slice(0, 14)}_${suffix}`;
+      counter++;
+      if (counter > 10) {
+        uniqueUsername = `user_${Date.now().toString().slice(-6)}`;
+        break;
+      }
+    }
+
+    // 3. Create user in MongoDB Atlas
+    const newUser = await User.create({
+      name: name || uniqueUsername,
+      username: uniqueUsername,
+      email: cleanEmail,
+      authProvider: provider,
+      firebaseUid: firebaseUid,
+      googleId: provider === 'google' ? firebaseUid : null,
+      facebookId: provider === 'facebook' ? firebaseUid : null,
+      profileImage: profileImage || null,
+      category: "Ideate-User",
+      reputationScore: 0,
+      reputationLevel: "Newcomer",
+    });
+
+    return await generateToken(res, newUser, `Welcome to Ideate, ${newUser.username}!`);
+  } catch (error) {
+    console.error("Social Auth Controller Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error processing social login.",
+      error: error.message,
+    });
+  }
+};
+
 // 3. Logout User: Logs out the user by clearing the token cookie.
 export const logout = async (req, res) => {
   try {
@@ -663,28 +770,306 @@ export const toggleFollow = async (req, res) => {
 
 export const suggestedUsers = async (req, res) => {
   try {
-      const loggedInUserId = req.id;
-      
-      const verifiedUsers = await User.find({ _id: { $ne: loggedInUserId }, isverified: true })
-          .select('username profileImage isverified followers followings category')
-          .limit(10);
+    const loggedInUserId = req.id;
+    const { limit = 20, category } = req.query;
+    const limitNum = Math.min(parseInt(limit) || 20, 50);
 
-      const nonVerifiedUsers = await User.find({ _id: { $ne: loggedInUserId }, isverified: false })
-          .select('username profileImage isverified followers followings category')
-          .limit(10);
+    let excludedUserIds = [];
+    let currentUserFollowings = [];
+    let currentUserTopics = [];
 
-      const suggestedUsers = [...verifiedUsers, ...nonVerifiedUsers];
+    if (loggedInUserId) {
+      const currentUser = await User.findById(loggedInUserId)
+        .select("followings blockedUsers mutedUsers followedTopics category")
+        .lean();
 
-      return res.status(200).json({
-          suggestedUsers,
-          success: true
-      });
+      if (currentUser) {
+        currentUserFollowings = (currentUser.followings || []).map((id) => id.toString());
+        currentUserTopics = (currentUser.followedTopics || []).map((id) => id.toString());
+        excludedUserIds = [
+          loggedInUserId.toString(),
+          ...currentUserFollowings,
+          ...(currentUser.blockedUsers || []).map((id) => id.toString()),
+          ...(currentUser.mutedUsers || []).map((id) => id.toString()),
+        ];
+      }
+    }
+
+    const baseFilter = {
+      _id: { $nin: excludedUserIds },
+      isBanned: false,
+      ...(category && category !== "All" ? { category } : {}),
+    };
+
+    // Fetch candidate users
+    const candidates = await User.find(baseFilter)
+      .select("username profileImage isverified name bio category followers followings followedTopics")
+      .limit(60)
+      .lean();
+
+    // Deterministic ranking algorithm
+    const scoredUsers = candidates.map((user) => {
+      let score = 0;
+      let reason = "Popular on Ideate";
+
+      // Signal 1: Mutual Followers
+      const userFollowers = (user.followers || []).map((id) => id.toString());
+      const mutuals = userFollowers.filter((id) => currentUserFollowings.includes(id));
+      const mutualCount = mutuals.length;
+
+      if (mutualCount > 0) {
+        score += mutualCount * 15;
+        reason = `Followed by ${mutualCount} people you follow`;
+      }
+
+      // Signal 2: Shared Topics
+      const userTopics = (user.followedTopics || []).map((id) => id.toString());
+      const sharedTopics = userTopics.filter((id) => currentUserTopics.includes(id));
+      if (sharedTopics.length > 0) {
+        score += sharedTopics.length * 10;
+        if (mutualCount === 0) {
+          reason = `Shared interests in topics`;
+        }
+      }
+
+      // Signal 3: Verified status
+      if (user.isverified) {
+        score += 8;
+      }
+
+      // Signal 4: General Popularity (follower count)
+      score += Math.min(userFollowers.length, 50) * 0.5;
+
+      return {
+        ...user,
+        mutualCount,
+        recommendationReason: reason,
+        isFollowing: false,
+        followersCount: userFollowers.length,
+        followingCount: (user.followings || []).length,
+        followers: undefined, // remove large arrays
+        followings: undefined,
+        score,
+      };
+    });
+
+    scoredUsers.sort((a, b) => b.score - a.score);
+    const resultUsers = scoredUsers.slice(0, limitNum);
+
+    return res.status(200).json({
+      success: true,
+      suggestedUsers: resultUsers,
+    });
   } catch (error) {
-      console.error("Error fetching suggested users:", error);
-      return res.status(500).json({
-          success: false,
-          message: "Error fetching suggested users"
-      });
+    console.error("Error fetching suggested users:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching suggested users",
+    });
+  }
+};
+
+// ─── GET /user/followers/:id ──────────────────────────────────────────────
+export const getFollowers = async (req, res) => {
+  try {
+    const targetUserId = req.params.id || req.id;
+    const { page = 1, limit = 20, search } = req.query;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(parseInt(limit) || 20, 50);
+    const skip = (pageNum - 1) * limitNum;
+
+    const user = await User.findById(targetUserId).select("followers").lean();
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    let filter = { _id: { $in: user.followers || [] } };
+    if (search && search.trim().length > 0) {
+      const regex = new RegExp(search.trim(), "i");
+      filter.$or = [{ username: regex }, { name: regex }];
+    }
+
+    const [followers, totalItems] = await Promise.all([
+      User.find(filter)
+        .select("username profileImage name isverified category followers followings")
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      User.countDocuments(filter),
+    ]);
+
+    let loggedInUserFollowings = new Set();
+    if (req.id) {
+      const loggedIn = await User.findById(req.id).select("followings").lean();
+      if (loggedIn && loggedIn.followings) {
+        loggedInUserFollowings = new Set(loggedIn.followings.map((id) => id.toString()));
+      }
+    }
+
+    const formattedFollowers = followers.map((f) => ({
+      ...f,
+      isFollowing: loggedInUserFollowings.has(f._id.toString()),
+      followerCount: (f.followers || []).length,
+      followingCount: (f.followings || []).length,
+      followers: undefined,
+      followings: undefined,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      followers: formattedFollowers,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        totalItems,
+        totalPages: Math.ceil(totalItems / limitNum),
+      },
+    });
+  } catch (error) {
+    console.error("Error in getFollowers:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch followers." });
+  }
+};
+
+// ─── GET /user/following/:id ──────────────────────────────────────────────
+export const getFollowing = async (req, res) => {
+  try {
+    const targetUserId = req.params.id || req.id;
+    const { page = 1, limit = 20, search } = req.query;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(parseInt(limit) || 20, 50);
+    const skip = (pageNum - 1) * limitNum;
+
+    const user = await User.findById(targetUserId).select("followings").lean();
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    let filter = { _id: { $in: user.followings || [] } };
+    if (search && search.trim().length > 0) {
+      const regex = new RegExp(search.trim(), "i");
+      filter.$or = [{ username: regex }, { name: regex }];
+    }
+
+    const [following, totalItems] = await Promise.all([
+      User.find(filter)
+        .select("username profileImage name isverified category followers followings")
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      User.countDocuments(filter),
+    ]);
+
+    let loggedInUserFollowings = new Set();
+    if (req.id) {
+      const loggedIn = await User.findById(req.id).select("followings").lean();
+      if (loggedIn && loggedIn.followings) {
+        loggedInUserFollowings = new Set(loggedIn.followings.map((id) => id.toString()));
+      }
+    }
+
+    const formattedFollowing = following.map((f) => ({
+      ...f,
+      isFollowing: loggedInUserFollowings.has(f._id.toString()),
+      followerCount: (f.followers || []).length,
+      followingCount: (f.followings || []).length,
+      followers: undefined,
+      followings: undefined,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      following: formattedFollowing,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        totalItems,
+        totalPages: Math.ceil(totalItems / limitNum),
+      },
+    });
+  } catch (error) {
+    console.error("Error in getFollowing:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch following users." });
+  }
+};
+
+// ─── GET /user/blocked ───────────────────────────────────────────────────
+export const getBlockedUsers = async (req, res) => {
+  try {
+    const userId = req.id;
+    const user = await User.findById(userId)
+      .populate("blockedUsers", "username profileImage name isverified category")
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    return res.status(200).json({
+      success: true,
+      blockedUsers: user.blockedUsers || [],
+    });
+  } catch (error) {
+    console.error("Error in getBlockedUsers:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch blocked users." });
+  }
+};
+
+// ─── GET /user/muted ─────────────────────────────────────────────────────
+export const getMutedUsers = async (req, res) => {
+  try {
+    const userId = req.id;
+    const user = await User.findById(userId)
+      .populate("mutedUsers", "username profileImage name isverified category")
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    return res.status(200).json({
+      success: true,
+      mutedUsers: user.mutedUsers || [],
+    });
+  } catch (error) {
+    console.error("Error in getMutedUsers:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch muted users." });
+  }
+};
+
+// ─── PUT /user/privacy-settings ──────────────────────────────────────────
+export const updatePrivacySettings = async (req, res) => {
+  try {
+    const userId = req.id;
+    const { isPrivate, messagePrivacy } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    if (isPrivate !== undefined) {
+      user.isPrivate = Boolean(isPrivate);
+    }
+
+    if (messagePrivacy && ["everyone", "following", "nobody"].includes(messagePrivacy)) {
+      user.messagePrivacy = messagePrivacy;
+    }
+
+    await user.save();
+    await invalidateCached(`user:profile:${userId}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Privacy settings updated.",
+      privacy: {
+        isPrivate: user.isPrivate,
+        messagePrivacy: user.messagePrivacy,
+      },
+    });
+  } catch (error) {
+    console.error("Error in updatePrivacySettings:", error);
+    return res.status(500).json({ success: false, message: "Failed to update privacy settings." });
   }
 };
 
@@ -901,6 +1286,65 @@ export const deleteAccount = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Internal server error during account deletion."
+    });
+  }
+};
+
+/**
+ * Change Password for Authenticated User
+ */
+export const changePassword = async (req, res) => {
+  try {
+    const userId = req.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password and new password are required.",
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be at least 6 characters long.",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password does not match.",
+      });
+    }
+
+    // Hash new password and save
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword;
+    await user.save();
+
+    // Invalidate Redis profile cache
+    await invalidateCached(`user:profile:${userId}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Password changed successfully.",
+    });
+  } catch (error) {
+    console.error("Error in changePassword:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while updating password.",
     });
   }
 };

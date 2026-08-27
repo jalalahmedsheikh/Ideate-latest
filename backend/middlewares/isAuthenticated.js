@@ -48,13 +48,47 @@ const isAuthenticated = async (req, res, next) => {
     // Proceed to the next middleware or route handler
     next();
   } catch (error) {
-    // Log the error and send a response with status 500 if something goes wrong
+    if (error.name === "TokenExpiredError" || error.name === "JsonWebTokenError") {
+      return res.status(401).json({
+        success: false,
+        message: "Your session has expired or is invalid. Please login again.",
+        code: "SESSION_EXPIRED",
+      });
+    }
+
     console.error('Authentication error:', error);
 
     return res.status(500).json({
       success: false,
       message: "An error occurred while verifying the token. Please try again later.",
     });
+  }
+};
+
+export const optionalAuth = async (req, res, next) => {
+  try {
+    let token = req.cookies?.token;
+    if (!token && req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
+      token = req.headers.authorization.split(" ")[1];
+    }
+
+    if (token) {
+      try {
+        const verifyToken = jwt.verify(token, process.env.SECRET_KEY);
+        if (verifyToken && verifyToken.userId) {
+          req.id = verifyToken.userId;
+        }
+      } catch (_) {
+        // Guest mode fallback if token invalid/expired
+        req.id = null;
+      }
+    } else {
+      req.id = null;
+    }
+    next();
+  } catch (error) {
+    req.id = null;
+    next();
   }
 };
 

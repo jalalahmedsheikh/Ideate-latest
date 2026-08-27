@@ -3,7 +3,7 @@ import { Report } from "../models/report.model.js";
 export const createReport = async (req, res) => {
     try {
         const userId = req.id;
-        const { targetId, targetType, reason } = req.body;
+        const { targetId, targetType, reason, description } = req.body;
 
         if (!targetId || !targetType || !reason) {
             return res.status(400).json({ success: false, message: "Target ID, Target Type, and Reason are required." });
@@ -13,7 +13,8 @@ export const createReport = async (req, res) => {
             reportedBy: userId,
             targetId,
             targetType,
-            reason
+            reason,
+            description: description ? description.trim() : ""
         });
 
         return res.status(201).json({

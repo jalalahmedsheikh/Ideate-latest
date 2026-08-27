@@ -6,8 +6,9 @@ export const notificationQueue = new Queue("notifications", { connection: redis 
 export const feedQueue         = new Queue("feeds",         { connection: redis });
 export const trendingQueue     = new Queue("trending",      { connection: redis });
 export const emailQueue        = new Queue("emails",        { connection: redis });
+export const mlQueue           = new Queue("ml_tasks",      { connection: redis });
 
-[notificationQueue, feedQueue, trendingQueue, emailQueue].forEach((queue) => {
+[notificationQueue, feedQueue, trendingQueue, emailQueue, mlQueue].forEach((queue) => {
   queue.on("error", () => {
     // Error listener attached to prevent unhandled EventEmitter console spam when Redis is offline
   });
@@ -69,6 +70,23 @@ export const startRepeatingTrendingJob = async () => {
     console.log("✅ Repeating trending job scheduled (every 2 min)");
   } catch (err) {
     console.warn("⚠️ Could not schedule repeating trending job (Redis may be offline):", err.message);
+  }
+};
+
+// ── Background ML User Vector Recalculation ───────────────────
+export const queueUserVectorUpdate = async (userId) => {
+  try {
+    await mlQueue.add(
+      "updateUserVector",
+      { userId },
+      {
+        jobId: `user-vector-${userId}`,
+        removeOnComplete: true,
+        removeOnFail: 50,
+      }
+    );
+  } catch (err) {
+    console.warn("⚠️ [queueUserVectorUpdate] Redis offline or queue error:", err.message);
   }
 };
 

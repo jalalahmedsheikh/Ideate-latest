@@ -6,10 +6,16 @@ import '../models/post_model.dart';
 import '../models/poll_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
+import '../widgets/guest_state_card.dart';
 import '../widgets/post_card.dart';
 import '../widgets/poll_card.dart';
 import 'edit_profile.dart';
 import 'settings_screen.dart';
+import 'creator_hub_screen.dart';
+import 'reputation_screen.dart';
+import 'communities_hub_screen.dart';
+import '../widgets/reputation_chip.dart';
+import '../widgets/verification_badge.dart';
 import '../utils/app_colors.dart';
 import '../widgets/custom_button.dart';
 
@@ -32,10 +38,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchProfileData();
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (authProvider.isAuthenticated) {
+      _fetchProfileData();
+    } else {
+      _isLoading = false;
+    }
   }
 
   Future<void> _fetchProfileData() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.isAuthenticated) {
+      if (mounted) {
+        setState(() {
+          _userPosts = [];
+          _userPolls = [];
+          _savedCreations = [];
+          _likedPosts = [];
+          _isLoading = false;
+          _error = null;
+        });
+      }
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _error = null;
@@ -137,9 +163,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final authProvider = Provider.of<AuthProvider>(context);
     final user = authProvider.currentUser;
 
-    if (user == null) {
-      return const Scaffold(
-        body: Center(child: Text('Please log in.')),
+    if (user == null || !authProvider.isAuthenticated) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(
+            'Profile',
+            style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 22),
+          ),
+          backgroundColor: AppColors.background,
+          elevation: 0,
+        ),
+        body: GuestStateCard(
+          title: 'Your Personal Profile',
+          description: 'Log in to view your profile, creations, bookmarks, and account settings.',
+          icon: Icons.person_outline,
+          onAuthSuccess: () {
+            _fetchProfileData();
+          },
+        ),
       );
     }
 
@@ -216,13 +257,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           user.username,
                           style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
                         ),
-                        if (user.isverified) ...[
-                          const SizedBox(width: 4),
-                          const Icon(Icons.verified, color: Colors.blue, size: 16),
-                        ],
+                        if (user.isverified)
+                          VerificationBadge(category: user.verificationCategory, size: 16),
+                        const SizedBox(width: 8),
+                        ReputationChip(
+                          score: user.reputationScore,
+                          level: user.reputationLevel,
+                          compact: true,
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const ReputationScreen()),
+                            );
+                          },
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 4),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
@@ -244,7 +295,79 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
 
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
+
+              // Phase 3 Feature Quick Shortcuts
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const CreatorHubScreen()),
+                          );
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6200EA).withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFF6200EA).withOpacity(0.35)),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.auto_graph, color: Color(0xFF9C27B0), size: 16),
+                              SizedBox(width: 6),
+                              Text(
+                                'Creator Studio',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.white),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: InkWell(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const CommunitiesHubScreen()),
+                          );
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.blue.withOpacity(0.35)),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.groups, color: Colors.blue, size: 16),
+                              SizedBox(width: 6),
+                              Text(
+                                'Communities',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.white),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 12),
 
               // Edit profile action button
               Padding(

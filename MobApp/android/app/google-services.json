@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "914033747902",
+    "project_id": "ideate-1eff4",
+    "storage_bucket": "ideate-1eff4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:914033747902:android:52014c2ec800fbb5147bef",
+        "android_client_info": {
+          "package_name": "com.ideate.ideate"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "914033747902-9f3vua2seao1ir4i5ka01d4j2bs0m2k8.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBrnRAX2aZalJ8bYtzDaYVcEZdEZHOgwDI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "914033747902-9f3vua2seao1ir4i5ka01d4j2bs0m2k8.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

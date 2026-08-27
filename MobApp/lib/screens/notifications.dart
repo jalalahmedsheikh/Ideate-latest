@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -10,7 +11,8 @@ import 'chat_screen.dart';
 import 'notification_category_screen.dart';
 import 'search_screen.dart';
 import 'other_profile.dart';
-import 'dart:async';
+import '../widgets/guest_state_card.dart';
+
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
 
@@ -43,9 +45,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchInboxData();
-    // Refresh every 30 seconds to show new notification bubbles
-    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _fetchInboxData());
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    if (auth.isAuthenticated) {
+      _fetchInboxData();
+      // Refresh every 30 seconds to show new notification bubbles
+      _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _fetchInboxData());
+    } else {
+      _isLoading = false;
+    }
   }
 
   @override
@@ -55,6 +62,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _fetchInboxData() async {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    if (!auth.isAuthenticated) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
@@ -189,6 +204,32 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isAuthenticated = Provider.of<AuthProvider>(context).isAuthenticated;
+
+    if (!isAuthenticated) {
+      return Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: AppColors.background,
+          elevation: 0,
+          title: Text(
+            'Updates & Inbox',
+            style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 22, color: AppColors.textPrimary),
+          ),
+        ),
+        body: GuestStateCard(
+          title: 'Updates & Messages',
+          description: 'Log in to Ideate to view your notifications, activity on your posts, and private 1-to-1 chats.',
+          icon: Icons.notifications_none_outlined,
+          onAuthSuccess: () {
+            _fetchInboxData();
+            _refreshTimer?.cancel();
+            _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _fetchInboxData());
+          },
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(

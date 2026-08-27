@@ -12,6 +12,7 @@
   "description": "",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@tensorflow/tfjs": "^4.22.0",
     "bcrypt": "^5.1.1",
     "bullmq": "^5.79.1",
     "cloudinary": "^2.5.1",

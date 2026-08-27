@@ -1,11 +1,59 @@
+import mongoose from "mongoose";
 import { Post } from "../models/post.model.js";
 import { User } from "../models/user.model.js";
 import { Comment } from "../models/comment.model.js";
 import { Poll } from "../models/poll.model.js";
+import { Topic } from "../models/topic.model.js";
 import { checkSpamAndToxicity } from "./ai.controller.js";
 import redis, { getCached, setCached, invalidateCached } from "../config/redis.js";
 import { queueNotification, queueFeedGeneration, queueTrendingUpdate } from "../queues/queue.js";
 import { io } from "../socket/socket.js";
+
+// Helper to safely resolve/validate topic ObjectIds
+const resolveValidTopicIds = async (topics) => {
+  if (!topics) return [];
+  let rawTopics = topics;
+  if (typeof rawTopics === "string") {
+    try {
+      rawTopics = JSON.parse(rawTopics);
+    } catch {
+      rawTopics = rawTopics.split(",").map((t) => t.trim());
+    }
+  }
+  if (!Array.isArray(rawTopics)) return [];
+
+  const validIds = [];
+  for (const t of rawTopics) {
+    if (!t) continue;
+    const str = String(t).trim();
+    if (mongoose.Types.ObjectId.isValid(str) && String(new mongoose.Types.ObjectId(str)) === str) {
+      validIds.push(new mongoose.Types.ObjectId(str));
+    } else if (str.startsWith("fallback_")) {
+      const idx = parseInt(str.replace("fallback_", ""), 10);
+      const DEFAULT_CATEGORIES = [
+        "Technology", "Programming", "Artificial Intelligence", "Business",
+        "Design", "Science", "Education", "Startups", "Productivity",
+        "Finance", "Philosophy", "General"
+      ];
+      const catName = DEFAULT_CATEGORIES[idx];
+      if (catName) {
+        let topicDoc = await Topic.findOne({ name: { $regex: new RegExp(`^${catName}$`, "i") } });
+        if (!topicDoc) {
+          topicDoc = await Topic.create({
+            name: catName,
+            slug: catName.toLowerCase().replace(/\s+/g, "-"),
+            icon: "💡",
+            category: catName,
+            description: `Discussion and ideas about ${catName}`,
+            status: "active"
+          });
+        }
+        validIds.push(topicDoc._id);
+      }
+    }
+  }
+  return validIds;
+};
 
 // Helper to invalidate post related caches
 const invalidatePostCaches = async (postId, authorId) => {
@@ -22,7 +70,7 @@ const invalidatePostCaches = async (postId, authorId) => {
 
 export const addNewPost = async (req, res) => {
   try {
-    const { caption } = req.body;
+    const { caption, topics } = req.body;
     const authorId = req.id;
 
     if (!caption) {
@@ -40,10 +88,18 @@ export const addNewPost = async (req, res) => {
       });
     }
 
+    const validatedTopics = await resolveValidTopicIds(topics);
+
     const post = await Post.create({
       caption,
-      author: authorId
+      author: authorId,
+      topics: validatedTopics
     });
+
+    // Increment topic post counts
+    if (validatedTopics.length > 0) {
+      await Topic.updateMany({ _id: { $in: validatedTopics } }, { $inc: { postCount: 1 } });
+    }
 
     const userr = await User.findById(authorId);
     if (userr) {
@@ -53,7 +109,10 @@ export const addNewPost = async (req, res) => {
       await invalidateCached(`user:profile:${authorId}`);
     }
 
-    await post.populate({ path: 'author', select: '-password' });
+    await post.populate([
+      { path: 'author', select: '-password' },
+      { path: 'topics', select: 'name slug icon category' }
+    ]);
 
     // 1. Invalidate list caches
     await invalidatePostCaches(null, authorId);
@@ -179,38 +238,14 @@ export const getSinglePost = async (req, res) => {
 export const getAllPostsOfFollowing = async (req, res) => {
   try {
     const loggedInUserId = req.id;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const skip = (page - 1) * limit;
 
-    // Check if personalized feed IDs exist in Redis list
-    const feedKey = `feed:following:${loggedInUserId}:ids`;
-    const cachedIds = await redis.lrange(feedKey, 0, 49); // Fetch first 50 post/poll IDs
+    const user = await User.findById(loggedInUserId)
+      .select("followings blockedUsers mutedUsers")
+      .lean();
 
-    if (cachedIds && cachedIds.length > 0) {
-      // Fetch details of cached post/poll IDs
-      const posts = await Post.find({ _id: { $in: cachedIds } })
-        .populate({ path: 'author', select: 'username profileImage isverified' })
-        .populate({
-          path: 'comments',
-          sort: { createdAt: -1 },
-          populate: {
-            path: 'author',
-            select: 'username profileImage isverified',
-          },
-        });
-
-      // Sort posts in memory to match the cached IDs order
-      const idMap = {};
-      cachedIds.forEach((id, idx) => { idMap[id] = idx; });
-      posts.sort((a, b) => idMap[a._id.toString()] - idMap[b._id.toString()]);
-
-      return res.status(200).json({
-        success: true,
-        posts,
-        cached: true
-      });
-    }
-
-    // Cache miss: rebuild feed from DB
-    const user = await User.findById(loggedInUserId).populate('followings');
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -218,35 +253,73 @@ export const getAllPostsOfFollowing = async (req, res) => {
       });
     }
 
-    const followingIds = user.followings.map(followedUser => followedUser._id);
-
-    const posts = await Post.find({ author: { $in: followingIds } })
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .populate({ path: 'author', select: 'username profileImage isverified' })
-      .populate({
-        path: 'comments',
-        sort: { createdAt: -1 },
-        populate: {
-          path: 'author',
-          select: 'username profileImage isverified',
-        },
+    const followingIds = (user.followings || []).map(id => id.toString());
+    if (followingIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        feed: [],
+        posts: [],
+        polls: [],
+        pagination: {
+          page,
+          limit,
+          totalItems: 0,
+          totalPages: 0,
+          hasNextPage: false,
+          hasPrevPage: false,
+        }
       });
-
-    // Populate Redis list with these IDs asynchronously for subsequent requests
-    if (posts.length > 0) {
-      const pipeline = redis.pipeline();
-      pipeline.del(feedKey);
-      posts.forEach(post => {
-        pipeline.rpush(feedKey, post._id.toString());
-      });
-      pipeline.expire(feedKey, 3600); // 1 hour TTL
-      await pipeline.exec();
     }
+
+    const blockedAndMuted = new Set([
+      ...(user.blockedUsers || []).map(id => id.toString()),
+      ...(user.mutedUsers || []).map(id => id.toString()),
+    ]);
+    const eligibleFollowingIds = followingIds.filter(id => !blockedAndMuted.has(id));
+
+    // Fetch both Posts and Polls from followed creators in parallel
+    const [posts, polls] = await Promise.all([
+      Post.find({ author: { $in: eligibleFollowingIds }, status: { $ne: 'deleted' } })
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .populate({ path: 'author', select: 'username profileImage isverified' })
+        .populate({
+          path: 'comments',
+          options: { limit: 10 },
+          populate: { path: 'author', select: 'username profileImage isverified' },
+        })
+        .lean(),
+      Poll.find({ author: { $in: eligibleFollowingIds }, status: { $ne: 'archived' } })
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .populate({ path: 'author', select: 'username profileImage isverified' })
+        .lean(),
+    ]);
+
+    const formattedPosts = posts.map(p => ({ ...p, feedType: 'post' }));
+    const formattedPolls = polls.map(p => ({ ...p, feedType: 'poll' }));
+
+    const combined = [...formattedPosts, ...formattedPolls].sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
+
+    const paginatedItems = combined.slice(skip, skip + limit);
+    const totalItems = combined.length;
+    const totalPages = Math.ceil(totalItems / limit);
 
     return res.status(200).json({
       success: true,
-      posts,
+      feed: paginatedItems,
+      posts: posts,
+      polls: polls,
+      pagination: {
+        page,
+        limit,
+        totalItems,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
     });
 
   } catch (error) {

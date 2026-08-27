@@ -18,6 +18,7 @@ const postSchema = new mongoose.Schema(
     },
     tags: [{ type: String }],       // General tags for categorization
     hashtags: [{ type: String }],   // Social hashtags (e.g. #flutter, #ideate)
+    topics: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Topic' }], // Topic references
     location: {
       type: { type: String, default: "Point" },
       coordinates: { type: [Number], index: "2dsphere" }, // Geospatial indexing
@@ -39,6 +40,7 @@ postSchema.index({ author: 1 });
 postSchema.index({ createdAt: -1 });
 postSchema.index({ tags: 1 });
 postSchema.index({ hashtags: 1 });
+postSchema.index({ topics: 1 });
 // Compound index for fast feed ranking queries
 postSchema.index({ status: 1, createdAt: -1 });
 

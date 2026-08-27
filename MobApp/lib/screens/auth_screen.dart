@@ -8,7 +8,12 @@ import '../utils/app_colors.dart';
 import '../widgets/custom_button.dart';
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
+  final int initialTab;
+
+  const AuthScreen({
+    super.key,
+    this.initialTab = 0,
+  });
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -51,7 +56,8 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    final tabIndex = (widget.initialTab >= 0 && widget.initialTab < 2) ? widget.initialTab : 0;
+    _tabController = TabController(length: 2, vsync: this, initialIndex: tabIndex);
   }
 
   @override
@@ -126,6 +132,56 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         ),
       );
       if (result['success']) {
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop(true);
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const NavigationHome()),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _handleGoogleLogin() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final result = await authProvider.signInWithGoogle();
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result['message'] ?? (result['success'] ? 'Logged in with Google!' : 'Google sign in failed.')),
+        backgroundColor: result['success'] ? Colors.green : Colors.red,
+      ),
+    );
+
+    if (result['success'] == true) {
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop(true);
+      } else {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const NavigationHome()),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleFacebookLogin() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final result = await authProvider.signInWithFacebook();
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result['message'] ?? (result['success'] ? 'Logged in with Facebook!' : 'Facebook sign in failed.')),
+        backgroundColor: result['success'] ? Colors.green : Colors.red,
+      ),
+    );
+
+    if (result['success'] == true) {
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop(true);
+      } else {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const NavigationHome()),
         );
@@ -406,6 +462,107 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     });
   }
 
+  Widget _buildSocialButtons(AuthProvider authProvider) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            const Expanded(child: Divider(color: AppColors.border, thickness: 1)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Text(
+                'OR CONTINUE WITH',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textMuted,
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ),
+            const Expanded(child: Divider(color: AppColors.border, thickness: 1)),
+          ],
+        ),
+        const SizedBox(height: 16),
+        // Google Button
+        InkWell(
+          onTap: authProvider.isLoading ? null : _handleGoogleLogin,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            height: 50,
+            decoration: BoxDecoration(
+              color: AppColors.surfaceElevated,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    'G',
+                    style: GoogleFonts.poppins(
+                      color: const Color(0xFF4285F4),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Continue with Google',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        // Facebook Button
+        InkWell(
+          onTap: authProvider.isLoading ? null : _handleFacebookLogin,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            height: 50,
+            decoration: BoxDecoration(
+              color: const Color(0xFF1877F2).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF1877F2).withOpacity(0.4)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.facebook, color: Color(0xFF1877F2), size: 24),
+                const SizedBox(width: 12),
+                Text(
+                  'Continue with Facebook',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
@@ -424,6 +581,17 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (Navigator.of(context).canPop()) ...[
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: IconButton(
+                          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+                          onPressed: () => Navigator.of(context).pop(false),
+                          tooltip: 'Back to Guest Browsing',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     // Brand Logo / Title
                     Center(
                       child: ClipRRect(
@@ -494,151 +662,159 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
                     // Tab View area
                     SizedBox(
-                      height: 440,
+                      height: 600,
                       child: TabBarView(
                         controller: _tabController,
                         children: [
-                          // Login Form
-                          Form(
-                            key: _loginFormKey,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                TextFormField(
-                                  controller: _loginEmailController,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Email Address',
-                                    prefixIcon: Icon(Icons.email_outlined, color: AppColors.textMuted),
+                          // Login Form Tab
+                          SingleChildScrollView(
+                            physics: const BouncingScrollPhysics(),
+                            child: Form(
+                              key: _loginFormKey,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  TextFormField(
+                                    controller: _loginEmailController,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Email Address',
+                                      prefixIcon: Icon(Icons.email_outlined, color: AppColors.textMuted),
+                                    ),
+                                    validator: (v) => (v == null || v.isEmpty) ? 'Please enter your email' : null,
                                   ),
-                                  validator: (v) => (v == null || v.isEmpty) ? 'Please enter your email' : null,
-                                ),
-                                const SizedBox(height: 16),
-                                TextFormField(
-                                  controller: _loginPasswordController,
-                                  obscureText: true,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Password',
-                                    prefixIcon: Icon(Icons.lock_outline, color: AppColors.textMuted),
+                                  const SizedBox(height: 16),
+                                  TextFormField(
+                                    controller: _loginPasswordController,
+                                    obscureText: true,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Password',
+                                      prefixIcon: Icon(Icons.lock_outline, color: AppColors.textMuted),
+                                    ),
+                                    validator: (v) => (v == null || v.isEmpty) ? 'Please enter password' : null,
                                   ),
-                                  validator: (v) => (v == null || v.isEmpty) ? 'Please enter password' : null,
-                                ),
-                                const SizedBox(height: 32),
-                                AppButton(
-                                  text: 'Sign In',
-                                  style: AppButtonStyle.gradient,
-                                  isLoading: authProvider.isLoading,
-                                  onPressed: _handleLogin,
-                                  height: 52,
-                                ),
-                              ],
+                                  const SizedBox(height: 24),
+                                  AppButton(
+                                    text: 'Sign In',
+                                    style: AppButtonStyle.gradient,
+                                    isLoading: authProvider.isLoading,
+                                    onPressed: _handleLogin,
+                                    height: 52,
+                                  ),
+                                  _buildSocialButtons(authProvider),
+                                ],
+                              ),
                             ),
                           ),
 
-                          // Signup Form with Realtime Username Availability
-                          Form(
-                            key: _registerFormKey,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                // Username Field with Live Indicator
-                                TextFormField(
-                                  controller: _registerUsernameController,
-                                  onChanged: _onUsernameChanged,
-                                  decoration: InputDecoration(
-                                    labelText: 'Username',
-                                    prefixIcon: const Icon(Icons.person_outline, color: Colors.grey),
-                                    suffixIcon: _isCheckingUsername
-                                        ? const Padding(
-                                            padding: EdgeInsets.all(12.0),
-                                            child: SizedBox(
-                                              width: 18,
-                                              height: 18,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                color: Color(0xFF7828B4),
+                          // Signup Form Tab with Realtime Username Availability
+                          SingleChildScrollView(
+                            physics: const BouncingScrollPhysics(),
+                            child: Form(
+                              key: _registerFormKey,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  // Username Field with Live Indicator
+                                  TextFormField(
+                                    controller: _registerUsernameController,
+                                    onChanged: _onUsernameChanged,
+                                    decoration: InputDecoration(
+                                      labelText: 'Username',
+                                      prefixIcon: const Icon(Icons.person_outline, color: Colors.grey),
+                                      suffixIcon: _isCheckingUsername
+                                          ? const Padding(
+                                              padding: EdgeInsets.all(12.0),
+                                              child: SizedBox(
+                                                width: 18,
+                                                height: 18,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: Color(0xFF7828B4),
+                                                ),
                                               ),
-                                            ),
-                                          )
-                                        : _isUsernameAvailable == true
-                                            ? const Icon(Icons.check_circle, color: Colors.green)
-                                            : _isUsernameAvailable == false
-                                                ? const Icon(Icons.cancel, color: Colors.red)
-                                                : null,
+                                            )
+                                          : _isUsernameAvailable == true
+                                              ? const Icon(Icons.check_circle, color: Colors.green)
+                                              : _isUsernameAvailable == false
+                                                  ? const Icon(Icons.cancel, color: Colors.red)
+                                                  : null,
+                                    ),
+                                    validator: (v) {
+                                      if (v == null || v.trim().isEmpty) return 'Please enter username';
+                                      if (v.trim().length < 3) return 'Username must be 3+ characters';
+                                      if (_isUsernameAvailable == false) return 'Username is already taken';
+                                      return null;
+                                    },
                                   ),
-                                  validator: (v) {
-                                    if (v == null || v.trim().isEmpty) return 'Please enter username';
-                                    if (v.trim().length < 3) return 'Username must be 3+ characters';
-                                    if (_isUsernameAvailable == false) return 'Username is already taken';
-                                    return null;
-                                  },
-                                ),
-                                if (_usernameStatusMsg.isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4, left: 12),
-                                    child: Text(
-                                      _usernameStatusMsg,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: _isUsernameAvailable == true ? Colors.green : Colors.redAccent,
+                                  if (_usernameStatusMsg.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4, left: 12),
+                                      child: Text(
+                                        _usernameStatusMsg,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: _isUsernameAvailable == true ? Colors.green : Colors.redAccent,
+                                        ),
                                       ),
                                     ),
+                                  const SizedBox(height: 12),
+                                  TextFormField(
+                                    controller: _registerEmailController,
+                                    keyboardType: TextInputType.emailAddress,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Email Address',
+                                      prefixIcon: Icon(Icons.email_outlined, color: Colors.grey),
+                                    ),
+                                    validator: (v) {
+                                      if (v == null || v.trim().isEmpty) return 'Please enter email';
+                                      if (!RegExp(r'^\S+@\S+\.\S+$').hasMatch(v.trim())) {
+                                        return 'Please enter a valid email address';
+                                      }
+                                      return null;
+                                    },
                                   ),
-                                const SizedBox(height: 12),
-                                TextFormField(
-                                  controller: _registerEmailController,
-                                  keyboardType: TextInputType.emailAddress,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Email Address',
-                                    prefixIcon: Icon(Icons.email_outlined, color: Colors.grey),
+                                  const SizedBox(height: 12),
+                                  TextFormField(
+                                    controller: _registerPasswordController,
+                                    obscureText: true,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Password',
+                                      prefixIcon: Icon(Icons.lock_outline, color: Colors.grey),
+                                    ),
+                                    validator: (v) => (v == null || v.length < 6) ? 'Password must be 6+ chars' : null,
                                   ),
-                                  validator: (v) {
-                                    if (v == null || v.trim().isEmpty) return 'Please enter email';
-                                    if (!RegExp(r'^\S+@\S+\.\S+$').hasMatch(v.trim())) {
-                                      return 'Please enter a valid email address';
-                                    }
-                                    return null;
-                                  },
-                                ),
-                                const SizedBox(height: 12),
-                                TextFormField(
-                                  controller: _registerPasswordController,
-                                  obscureText: true,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Password',
-                                    prefixIcon: Icon(Icons.lock_outline, color: Colors.grey),
+                                  const SizedBox(height: 12),
+                                  DropdownButtonFormField<String>(
+                                    value: _selectedCategory,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Profession / Category',
+                                      prefixIcon: Icon(Icons.work_outline, color: Colors.grey),
+                                    ),
+                                    items: _categories.map((cat) {
+                                      return DropdownMenuItem(
+                                        value: cat,
+                                        child: Text(cat),
+                                      );
+                                    }).toList(),
+                                    onChanged: (v) {
+                                      if (v != null) {
+                                        setState(() {
+                                          _selectedCategory = v;
+                                        });
+                                      }
+                                    },
                                   ),
-                                  validator: (v) => (v == null || v.length < 6) ? 'Password must be 6+ chars' : null,
-                                ),
-                                const SizedBox(height: 12),
-                                DropdownButtonFormField<String>(
-                                  value: _selectedCategory,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Profession / Category',
-                                    prefixIcon: Icon(Icons.work_outline, color: Colors.grey),
+                                  const SizedBox(height: 20),
+                                  AppButton(
+                                    text: 'Verify Email & Register',
+                                    style: AppButtonStyle.gradient,
+                                    isLoading: authProvider.isLoading,
+                                    onPressed: _handleRegisterInitiate,
+                                    height: 52,
                                   ),
-                                  items: _categories.map((cat) {
-                                    return DropdownMenuItem(
-                                      value: cat,
-                                      child: Text(cat),
-                                    );
-                                  }).toList(),
-                                  onChanged: (v) {
-                                    if (v != null) {
-                                      setState(() {
-                                        _selectedCategory = v;
-                                      });
-                                    }
-                                  },
-                                ),
-                                const SizedBox(height: 24),
-                                 AppButton(
-                                  text: 'Verify Email & Register',
-                                  style: AppButtonStyle.gradient,
-                                  isLoading: authProvider.isLoading,
-                                  onPressed: _handleRegisterInitiate,
-                                  height: 52,
-                                ),
-                              ],
+                                  _buildSocialButtons(authProvider),
+                                ],
+                              ),
                             ),
                           ),
                         ],

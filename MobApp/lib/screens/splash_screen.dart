@@ -76,8 +76,8 @@ class _SplashScreenState extends State<SplashScreen>
   // ── Navigation (fade, remove splash from stack) ───────────────
   void _navigate(bool authenticated) {
     _dotTimer?.cancel();
-    final destination =
-        authenticated ? const NavigationHome() : const AuthScreen();
+    // App now launches directly into NavigationHome (Guest or Authenticated)
+    const destination = NavigationHome();
 
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(

@@ -3,9 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../models/user_model.dart';
+import '../models/post_model.dart';
+import '../models/poll_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
 import '../utils/app_colors.dart';
+import '../widgets/post_card.dart';
+import '../widgets/poll_card.dart';
+import '../widgets/report_dialog.dart';
 
 class ChatScreen extends StatefulWidget {
   final UserModel targetUser;
@@ -54,7 +59,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _isSending) return;
 
     _messageController.clear();
     setState(() => _isSending = true);
@@ -63,6 +68,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final response = await ApiService.post('/message/send', {
         'recipientId': widget.targetUser.id,
         'text': text,
+        'type': 'text',
       });
 
       final data = json.decode(response.body);
@@ -98,6 +104,39 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Future<void> _blockUser() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.cardBackground,
+        title: Text('Block @${widget.targetUser.username}?', style: GoogleFonts.outfit(color: AppColors.textPrimary)),
+        content: Text('They will no longer be able to message you or see your content.', style: GoogleFonts.inter(color: AppColors.textSecondary)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Block', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final response = await ApiService.post('/user/block', {'targetUserId': widget.targetUser.id});
+      if (response.statusCode == 200) {
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Blocked @${widget.targetUser.username}.')),
+          );
+        }
+      }
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     _messageController.dispose();
@@ -105,9 +144,128 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  Widget _buildMessageBubble(dynamic msg, bool isMe) {
+    final type = msg['type'] ?? 'text';
+    final text = msg['text'] ?? '';
+    final sharedPost = msg['sharedPost'];
+    final sharedPoll = msg['sharedPoll'];
+
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: isMe ? AppColors.primary : AppColors.cardBackground,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isMe ? 16 : 4),
+            bottomRight: Radius.circular(isMe ? 4 : 16),
+          ),
+          border: isMe ? null : Border.all(color: AppColors.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (type == 'shared_post' && sharedPost != null) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isMe ? Colors.black.withOpacity(0.2) : AppColors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: isMe ? Colors.white24 : AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.lightbulb_outline_rounded, size: 14, color: AppColors.primary),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Shared Idea',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: isMe ? Colors.white70 : AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      sharedPost['caption'] ?? '',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        color: isMe ? Colors.white : AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else if (type == 'shared_poll' && sharedPoll != null) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isMe ? Colors.black.withOpacity(0.2) : AppColors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: isMe ? Colors.white24 : AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.poll_outlined, size: 14, color: AppColors.primary),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Shared Poll',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: isMe ? Colors.white70 : AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      sharedPoll['question'] ?? '',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        color: isMe ? Colors.white : AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            if (text.isNotEmpty)
+              Text(
+                text,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  color: isMe ? Colors.white : AppColors.textPrimary,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final currentUser = Provider.of<AuthProvider>(context).currentUser;
+    final currentUserId = Provider.of<AuthProvider>(context).currentUser?.id;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -122,139 +280,89 @@ class _ChatScreenState extends State<ChatScreen> {
         titleSpacing: 0,
         title: Row(
           children: [
-            Stack(
+            CircleAvatar(
+              radius: 18,
+              backgroundImage: widget.targetUser.profileImage != null && widget.targetUser.profileImage!.isNotEmpty
+                  ? NetworkImage(widget.targetUser.profileImage!)
+                  : null,
+              child: widget.targetUser.profileImage == null
+                  ? const Icon(Icons.person, color: Colors.white, size: 18)
+                  : null,
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  radius: 20,
-                  backgroundImage: widget.targetUser.profileImage != null && widget.targetUser.profileImage!.isNotEmpty
-                      ? NetworkImage(widget.targetUser.profileImage!)
-                      : null,
-                  child: (widget.targetUser.profileImage == null || widget.targetUser.profileImage!.isEmpty)
-                      ? const Icon(Icons.person, color: Colors.white, size: 20)
-                      : null,
-                ),
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: 11,
-                    height: 11,
-                    decoration: BoxDecoration(
-                      color: AppColors.success,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: AppColors.surface, width: 2),
-                    ),
+                Text(
+                  widget.targetUser.username,
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
                   ),
+                ),
+                Text(
+                  widget.targetUser.category,
+                  style: GoogleFonts.inter(fontSize: 11, color: AppColors.textSecondary),
                 ),
               ],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          '@${widget.targetUser.username}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                        ),
-                      ),
-                      if (widget.targetUser.isverified) ...[
-                        const SizedBox(width: 4),
-                        const Icon(Icons.verified, color: Colors.blue, size: 14),
-                      ],
-                    ],
-                  ),
-                  Text(
-                    '@${widget.targetUser.username} • ${widget.targetUser.category}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.inter(fontSize: 11, color: AppColors.textSecondary),
-                  ),
-                ],
-              ),
-            ),
           ],
         ),
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: AppColors.textSecondary),
+            color: AppColors.cardBackground,
+            onSelected: (val) {
+              if (val == 'block') {
+                _blockUser();
+              } else if (val == 'report') {
+                ReportDialog.show(context, targetId: widget.targetUser.id, targetType: 'User');
+              }
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'report',
+                child: Text('Report User', style: TextStyle(color: AppColors.textPrimary)),
+              ),
+              const PopupMenuItem(
+                value: 'block',
+                child: Text('Block User', style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        ],
       ),
       body: Column(
         children: [
-          // Messages list
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
                 : _messages.isEmpty
                     ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            CircleAvatar(
-                              radius: 36,
-                              backgroundColor: AppColors.surfaceElevated,
-                              child: const Icon(Icons.mark_chat_unread_outlined, size: 36, color: AppColors.primary),
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Say hi to ${widget.targetUser.username}!',
-                              style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Send a direct 1-to-1 message to start chatting.',
-                              style: GoogleFonts.inter(fontSize: 13, color: AppColors.textSecondary),
-                            ),
-                          ],
+                        child: Text(
+                          'No messages yet. Send a greeting!',
+                          style: GoogleFonts.inter(color: AppColors.textSecondary),
                         ),
                       )
                     : ListView.builder(
                         controller: _scrollController,
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         itemCount: _messages.length,
-                        itemBuilder: (context, index) {
-                          final msg = _messages[index];
-                          final senderId = (msg['sender'] is Map) ? msg['sender']['_id'] : msg['sender'];
-                          final isMe = currentUser != null && senderId == currentUser.id;
-
-                          return Align(
-                            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                            child: Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              constraints: BoxConstraints(
-                                maxWidth: MediaQuery.of(context).size.width * 0.75,
-                              ),
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                              decoration: BoxDecoration(
-                                gradient: isMe ? AppColors.buttonGradient : null,
-                                color: isMe ? null : AppColors.cardBackground,
-                                borderRadius: BorderRadius.only(
-                                  topLeft: const Radius.circular(16),
-                                  topRight: const Radius.circular(16),
-                                  bottomLeft: Radius.circular(isMe ? 16 : 4),
-                                  bottomRight: Radius.circular(isMe ? 4 : 16),
-                                ),
-                                border: isMe ? null : Border.all(color: AppColors.border),
-                              ),
-                              child: Text(
-                                msg['text'] ?? '',
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  color: Colors.white,
-                                  height: 1.4,
-                                ),
-                              ),
-                            ),
-                          );
+                        itemBuilder: (ctx, idx) {
+                          final msg = _messages[idx];
+                          final senderId = msg['sender'] is Map
+                              ? (msg['sender']['_id'] ?? msg['sender']['id'])
+                              : msg['sender']?.toString();
+                          final isMe = senderId == currentUserId;
+                          return _buildMessageBubble(msg, isMe);
                         },
                       ),
           ),
 
-          // Message input bar
+          // Message Composer
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.all(12),
             decoration: const BoxDecoration(
               color: AppColors.surface,
               border: Border(top: BorderSide(color: AppColors.border)),
@@ -262,45 +370,34 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.inputBackground,
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(color: AppColors.border),
+                  child: TextField(
+                    controller: _messageController,
+                    style: GoogleFonts.inter(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      hintText: 'Type a message...',
+                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: TextField(
-                      controller: _messageController,
-                      style: GoogleFonts.inter(color: AppColors.textPrimary, fontSize: 14),
-                      decoration: const InputDecoration(
-                        hintText: 'Send a message...',
-                        hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 14),
-                        border: InputBorder.none,
-                      ),
-                      maxLines: null,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _sendMessage(),
-                    ),
+                    maxLines: null,
+                    onSubmitted: (_) => _sendMessage(),
                   ),
                 ),
                 const SizedBox(width: 8),
-                Container(
-                  decoration: const BoxDecoration(
-                    gradient: AppColors.buttonGradient,
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    onPressed: _sendMessage,
-                    icon: _isSending
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Icon(Icons.send_rounded, size: 18),
-                    color: Colors.white,
-                  ),
-                ),
+                _isSending
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+                      )
+                    : Container(
+                        decoration: const BoxDecoration(
+                          gradient: AppColors.buttonGradient,
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          icon: const Icon(Icons.send_rounded, color: Colors.white, size: 18),
+                          onPressed: _sendMessage,
+                        ),
+                      ),
               ],
             ),
           ),

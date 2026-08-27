@@ -1,10 +1,10 @@
 import express from "express";
 import { getTrendingPostsPolls } from "../controllers/TrendingPostsPolls.controller.js";
-import isAuthenticated from "../middlewares/isAuthenticated.js";
+import { optionalAuth } from "../middlewares/isAuthenticated.js";
 
 const router = express.Router();
 
-// Route to get all posts and polls except the logged-in user's
-router.route("/trending-posts-polls").get(isAuthenticated, getTrendingPostsPolls);
+// Route to get trending posts and polls (supports both guest and authenticated users)
+router.route("/trending-posts-polls").get(optionalAuth, getTrendingPostsPolls);
 
 export default router;

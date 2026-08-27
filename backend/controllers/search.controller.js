@@ -1,78 +1,174 @@
 import { User } from "../models/user.model.js";
 import { Post } from "../models/post.model.js";
+import { Question } from "../models/question.model.js";
+import { Debate } from "../models/debate.model.js";
 import { Poll } from "../models/poll.model.js";
-import { getCached, setCached } from "../config/redis.js";
+import { Community } from "../models/community.model.js";
+import { Topic } from "../models/topic.model.js";
 
-// Unified search: users, posts, polls
+// Unified search across all Ideate Identity entities
 export const globalSearch = async (req, res) => {
   try {
-    const { q = "" } = req.query;
+    const { q = "", type = "all" } = req.query;
     const query = q.trim();
 
     if (!query || query.length < 1) {
       return res.status(200).json({
         success: true,
-        results: { users: [], posts: [], polls: [] },
+        results: {
+          users: [],
+          creators: [],
+          posts: [],
+          questions: [],
+          debates: [],
+          polls: [],
+          communities: [],
+          topics: [],
+        },
         query,
       });
     }
 
-    // Short cache key (5 seconds) — keeps suggestions snappy without hammering DB
-    const cacheKey = `search:${query.toLowerCase()}`;
-    const cached = await getCached(cacheKey);
-    if (cached) {
-      return res.status(200).json({ success: true, ...cached, cached: true });
+    let excludedUserIds = [];
+    if (req.id) {
+      const currentUser = await User.findById(req.id).select("blockedUsers mutedUsers").lean();
+      if (currentUser) {
+        excludedUserIds = [
+          ...(currentUser.blockedUsers || []).map((id) => id.toString()),
+          ...(currentUser.mutedUsers || []).map((id) => id.toString()),
+        ];
+      }
     }
 
     const regex = new RegExp(query, "i");
 
-    // Run all three queries in parallel
-    const [users, posts, polls] = await Promise.all([
-      User.find({
-        $or: [{ username: regex }, { category: regex }],
-      })
-        .select("username profileImage category isverified followers")
-        .limit(15)
-        .lean(),
+    const [users, creators, posts, questions, debates, polls, communities, topics] = await Promise.all([
+      // 1. Users
+      type === "all" || type === "users"
+        ? User.find({
+            _id: { $nin: excludedUserIds },
+            isBanned: false,
+            $or: [{ username: regex }, { name: regex }, { bio: regex }],
+          })
+            .select("username name profileImage category isverified reputationScore reputationLevel followers followings")
+            .limit(20)
+            .lean()
+        : [],
 
-      Post.find({
-        $or: [
-          { caption: regex },
-          { hashtags: regex }, // if you store hashtags array
-        ],
-        status: { $ne: "deleted" },
-      })
-        .populate({ path: "author", select: "username profileImage isverified" })
-        .sort({ createdAt: -1 })
-        .limit(15)
-        .lean(),
+      // 2. Creators
+      type === "all" || type === "creators"
+        ? User.find({
+            _id: { $nin: excludedUserIds },
+            isBanned: false,
+            isCreator: true,
+            $or: [{ username: regex }, { name: regex }, { bio: regex }],
+          })
+            .select("username name profileImage category isverified reputationScore reputationLevel followers")
+            .limit(20)
+            .lean()
+        : [],
 
-      Poll.find({
-        $or: [{ question: regex }, { options: regex }],
-        status: "open",
-      })
-        .populate({ path: "author", select: "username profileImage isverified" })
-        .sort({ createdAt: -1 })
-        .limit(15)
-        .lean(),
+      // 3. Posts
+      type === "all" || type === "posts"
+        ? Post.find({
+            status: "active",
+            ...(excludedUserIds.length > 0 ? { author: { $nin: excludedUserIds } } : {}),
+            $or: [{ caption: regex }, { hashtags: regex }, { tags: regex }],
+          })
+            .populate("author", "username name profileImage isverified reputationScore")
+            .populate("topics", "name icon")
+            .sort({ createdAt: -1 })
+            .limit(20)
+            .lean()
+        : [],
+
+      // 4. Questions
+      type === "all" || type === "questions"
+        ? Question.find({
+            status: "active",
+            ...(excludedUserIds.length > 0 ? { author: { $nin: excludedUserIds } } : {}),
+            $or: [{ title: regex }, { description: regex }],
+          })
+            .populate("author", "username name profileImage isverified reputationScore")
+            .populate("topics", "name icon")
+            .sort({ createdAt: -1 })
+            .limit(20)
+            .lean()
+        : [],
+
+      // 5. Debates
+      type === "all" || type === "debates"
+        ? Debate.find({
+            status: { $in: ["active", "closed"] },
+            ...(excludedUserIds.length > 0 ? { author: { $nin: excludedUserIds } } : {}),
+            $or: [{ title: regex }, { resolution: regex }, { context: regex }],
+          })
+            .populate("author", "username name profileImage isverified reputationScore")
+            .populate("topic", "name icon")
+            .sort({ createdAt: -1 })
+            .limit(20)
+            .lean()
+        : [],
+
+      // 6. Polls
+      type === "all" || type === "polls"
+        ? Poll.find({
+            status: { $in: ["open", "closed"] },
+            ...(excludedUserIds.length > 0 ? { author: { $nin: excludedUserIds } } : {}),
+            $or: [{ question: regex }, { options: regex }],
+          })
+            .populate("author", "username name profileImage isverified")
+            .populate("topics", "name icon")
+            .sort({ createdAt: -1 })
+            .limit(20)
+            .lean()
+        : [],
+
+      // 7. Communities
+      type === "all" || type === "communities"
+        ? Community.find({
+            isSuspended: false,
+            $or: [{ name: regex }, { handle: regex }, { description: regex }, { tags: regex }],
+          })
+            .populate("creator", "username name profileImage isverified")
+            .sort({ membersCount: -1 })
+            .limit(20)
+            .lean()
+        : [],
+
+      // 8. Topics
+      type === "all" || type === "topics"
+        ? Topic.find({
+            status: "active",
+            $or: [{ name: regex }, { description: regex }, { slug: regex }],
+          })
+            .sort({ followerCount: -1 })
+            .limit(20)
+            .lean()
+        : [],
     ]);
 
-    const payload = {
-      results: { users, posts, polls },
+    return res.status(200).json({
+      success: true,
       query,
-    };
-
-    // Cache for 5 seconds — live suggestions feel instant, DB not hammered
-    await setCached(cacheKey, payload, 5);
-
-    return res.status(200).json({ success: true, ...payload });
+      results: {
+        users,
+        creators,
+        posts: posts.map((p) => ({ ...p, feedType: "post" })),
+        questions: questions.map((q) => ({ ...q, feedType: "question" })),
+        debates: debates.map((d) => ({ ...d, feedType: "debate" })),
+        polls: polls.map((pl) => ({ ...pl, feedType: "poll" })),
+        communities,
+        topics,
+      },
+    });
   } catch (error) {
     console.error("Search error:", error);
     return res.status(500).json({ success: false, message: "Search failed." });
   }
 };
 
-// Quick suggestions (usernames only, for autocomplete dropdown)
+// Quick autocomplete suggestions
 export const searchSuggestions = async (req, res) => {
   try {
     const { q = "" } = req.query;
@@ -82,32 +178,40 @@ export const searchSuggestions = async (req, res) => {
       return res.status(200).json({ success: true, suggestions: [] });
     }
 
-    const cacheKey = `suggest:${query.toLowerCase()}`;
-    const cached = await getCached(cacheKey);
-    if (cached) {
-      return res.status(200).json({ success: true, ...cached, cached: true });
-    }
+    const regex = new RegExp("^" + query, "i");
 
-    const regex = new RegExp("^" + query, "i"); // starts-with for suggestions
-
-    const [users, posts, polls] = await Promise.all([
-      User.find({ username: regex })
-        .select("username profileImage isverified")
-        .limit(5)
-        .lean(),
-
-      Post.find({ caption: regex })
-        .select("caption")
+    const [users, questions, communities, topics] = await Promise.all([
+      User.find({ username: regex, isBanned: false })
+        .select("username name profileImage isverified")
         .limit(3)
         .lean(),
-
-      Poll.find({ question: regex })
-        .select("question")
+      Question.find({ title: regex, status: "active" })
+        .select("title")
+        .limit(3)
+        .lean(),
+      Community.find({ name: regex, isSuspended: false })
+        .select("name handle profileImage")
+        .limit(3)
+        .lean(),
+      Topic.find({ name: regex, status: "active" })
+        .select("name slug icon")
         .limit(3)
         .lean(),
     ]);
 
     const suggestions = [
+      ...topics.map((t) => ({
+        type: "topic",
+        id: t._id,
+        label: `#${t.name}`,
+        icon: t.icon,
+      })),
+      ...communities.map((c) => ({
+        type: "community",
+        id: c._id,
+        label: `c/${c.handle}`,
+        name: c.name,
+      })),
       ...users.map((u) => ({
         type: "user",
         id: u._id,
@@ -115,24 +219,15 @@ export const searchSuggestions = async (req, res) => {
         profileImage: u.profileImage,
         isverified: u.isverified,
       })),
-      ...posts.map((p) => ({
-        type: "post",
-        id: p._id,
-        label: p.caption.length > 50 ? p.caption.substring(0, 50) + "…" : p.caption,
-      })),
-      ...polls.map((p) => ({
-        type: "poll",
-        id: p._id,
-        label: p.question.length > 50 ? p.question.substring(0, 50) + "…" : p.question,
+      ...questions.map((q) => ({
+        type: "question",
+        id: q._id,
+        label: q.title.length > 50 ? q.title.substring(0, 50) + "…" : q.title,
       })),
     ];
 
-    const payload = { suggestions };
-    await setCached(cacheKey, payload, 5);
-
-    return res.status(200).json({ success: true, ...payload });
+    return res.status(200).json({ success: true, suggestions });
   } catch (error) {
-    console.error("Suggestion error:", error);
     return res.status(500).json({ success: false, suggestions: [] });
   }
 };

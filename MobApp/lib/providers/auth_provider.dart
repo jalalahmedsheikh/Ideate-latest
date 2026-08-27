@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import '../models/user_model.dart';
 import '../services/api_service.dart';
 
@@ -188,6 +191,132 @@ class AuthProvider with ChangeNotifier {
       // On any error, we silently do nothing — user stays on screen
     } catch (e) {
       debugPrint('refreshCurrentUser error (ignored): $e');
+    }
+  }
+
+  // Sign in with Google (Firebase + MongoDB Atlas persistence)
+  Future<Map<String, dynamic>> signInWithGoogle() async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final GoogleSignIn googleSignIn = GoogleSignIn();
+      final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
+
+      if (googleUser == null) {
+        _isLoading = false;
+        notifyListeners();
+        return {'success': false, 'message': 'Google sign-in was cancelled.'};
+      }
+
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+
+      final OAuthCredential credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      final UserCredential userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
+      final User? firebaseUser = userCredential.user;
+
+      if (firebaseUser == null) {
+        _isLoading = false;
+        notifyListeners();
+        return {'success': false, 'message': 'Failed to authenticate with Firebase.'};
+      }
+
+      // Sync user profile & create record in MongoDB Atlas backend
+      final response = await ApiService.post('/user/social-auth', {
+        'email': firebaseUser.email ?? googleUser.email,
+        'name': firebaseUser.displayName ?? googleUser.displayName,
+        'profileImage': firebaseUser.photoURL ?? googleUser.photoUrl,
+        'firebaseUid': firebaseUser.uid,
+        'authProvider': 'google',
+      });
+
+      final data = json.decode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        _token = data['token'];
+        _currentUser = UserModel.fromJson(data['user']);
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('jwt_token', _token!);
+
+        _isLoading = false;
+        notifyListeners();
+        return {'success': true, 'message': data['message'] ?? 'Logged in with Google!'};
+      } else {
+        _isLoading = false;
+        notifyListeners();
+        return {'success': false, 'message': data['message'] ?? 'Server failed to process Google login.'};
+      }
+    } catch (e) {
+      _isLoading = false;
+      notifyListeners();
+      return {'success': false, 'message': 'Google sign in error: $e'};
+    }
+  }
+
+  // Sign in with Facebook (Firebase + MongoDB Atlas persistence)
+  Future<Map<String, dynamic>> signInWithFacebook() async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final LoginResult result = await FacebookAuth.instance.login(
+        permissions: ['public_profile', 'email'],
+      );
+
+      if (result.status != LoginStatus.success || result.accessToken == null) {
+        _isLoading = false;
+        notifyListeners();
+        return {'success': false, 'message': result.message ?? 'Facebook sign in was cancelled or failed.'};
+      }
+
+      final OAuthCredential credential = FacebookAuthProvider.credential(result.accessToken!.tokenString);
+      final UserCredential userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
+      final User? firebaseUser = userCredential.user;
+
+      if (firebaseUser == null) {
+        _isLoading = false;
+        notifyListeners();
+        return {'success': false, 'message': 'Failed to authenticate with Firebase.'};
+      }
+
+      final userData = await FacebookAuth.instance.getUserData();
+      final email = firebaseUser.email ?? userData['email'] ?? '${firebaseUser.uid}@facebook.com';
+      final name = firebaseUser.displayName ?? userData['name'];
+      final photoUrl = firebaseUser.photoURL ?? userData['picture']?['data']?['url'];
+
+      // Sync user profile & create record in MongoDB Atlas backend
+      final response = await ApiService.post('/user/social-auth', {
+        'email': email,
+        'name': name,
+        'profileImage': photoUrl,
+        'firebaseUid': firebaseUser.uid,
+        'authProvider': 'facebook',
+      });
+
+      final data = json.decode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        _token = data['token'];
+        _currentUser = UserModel.fromJson(data['user']);
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('jwt_token', _token!);
+
+        _isLoading = false;
+        notifyListeners();
+        return {'success': true, 'message': data['message'] ?? 'Logged in with Facebook!'};
+      } else {
+        _isLoading = false;
+        notifyListeners();
+        return {'success': false, 'message': data['message'] ?? 'Server failed to process Facebook login.'};
+      }
+    } catch (e) {
+      _isLoading = false;
+      notifyListeners();
+      return {'success': false, 'message': 'Facebook sign in error: $e'};
     }
   }
 

@@ -5,13 +5,20 @@ import 'package:provider/provider.dart';
 import '../models/user_model.dart';
 import '../models/post_model.dart';
 import '../models/poll_model.dart';
+import '../models/question_model.dart';
+import '../models/debate_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
 import '../utils/app_colors.dart';
+import '../widgets/auth_prompt_sheet.dart';
 import '../widgets/custom_button.dart';
 import 'chat_screen.dart';
 import '../widgets/post_card.dart';
 import '../widgets/poll_card.dart';
+import '../widgets/question_card.dart';
+import '../widgets/debate_card.dart';
+import '../widgets/reputation_chip.dart';
+import '../widgets/verification_badge.dart';
 
 class OtherProfileScreen extends StatefulWidget {
   final String userId;
@@ -125,6 +132,16 @@ class _OtherProfileScreenState extends State<OtherProfileScreen> {
     if (_profileUser == null) return;
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.isAuthenticated) {
+      AuthPrompt.show(
+        context,
+        title: 'Follow Creator',
+        message: 'Log in to follow ${_profileUser!.username} and see their creations in your Following feed.',
+        icon: Icons.person_add_outlined,
+      );
+      return;
+    }
+
     final currentUserId = authProvider.currentUser?.id;
     if (currentUserId == null) return;
 
@@ -267,13 +284,17 @@ class _OtherProfileScreenState extends State<OtherProfileScreen> {
                                     _profileUser!.username,
                                     style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
                                   ),
-                                  if (_profileUser!.isverified) ...[
-                                    const SizedBox(width: 4),
-                                    const Icon(Icons.verified, color: Colors.blue, size: 16),
-                                  ],
+                                  if (_profileUser!.isverified)
+                                    VerificationBadge(category: _profileUser!.verificationCategory, size: 16),
+                                  const SizedBox(width: 8),
+                                  ReputationChip(
+                                    score: _profileUser!.reputationScore,
+                                    level: _profileUser!.reputationLevel,
+                                    compact: true,
+                                  ),
                                 ],
                               ),
-                               const SizedBox(height: 2),
+                              const SizedBox(height: 4),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
@@ -312,23 +333,31 @@ class _OtherProfileScreenState extends State<OtherProfileScreen> {
                                 ),
                               ),
                               const SizedBox(width: 12),
-                              Expanded(
-                                child: AppButton(
-                                  text: 'Message',
-                                  icon: Icons.chat_bubble_outline_rounded,
-                                  style: AppButtonStyle.outlined,
-                                  height: 46,
-                                  onPressed: () {
-                                    if (_profileUser != null) {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (_) => ChatScreen(targetUser: _profileUser!),
-                                        ),
-                                      );
-                                    }
-                                  },
-                                ),
+                              AppButton(
+                                text: 'Message',
+                                icon: Icons.chat_bubble_outline,
+                                style: AppButtonStyle.secondary,
+                                height: 46,
+                                onPressed: () {
+                                  final auth = Provider.of<AuthProvider>(context, listen: false);
+                                  if (!auth.isAuthenticated) {
+                                    AuthPrompt.show(
+                                      context,
+                                      title: 'Send Message',
+                                      message: 'Log in to start private peer discussions.',
+                                      icon: Icons.chat_bubble_outline,
+                                    );
+                                    return;
+                                  }
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => ChatScreen(
+                                        targetUser: _profileUser!,
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
                             ],
                           ),
@@ -336,18 +365,25 @@ class _OtherProfileScreenState extends State<OtherProfileScreen> {
 
                         const Divider(color: AppColors.border, height: 32),
 
-                        // Creations Header
+                        // User creations title
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: Text(
                             'Creations',
-                            style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                            style: GoogleFonts.outfit(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                            ),
                           ),
                         ),
 
+                        const SizedBox(height: 12),
+
+                        // List of creations
                         _creations.isEmpty
                             ? Padding(
-                                padding: const EdgeInsets.all(32),
+                                padding: const EdgeInsets.symmetric(vertical: 48),
                                 child: Center(
                                   child: Text(
                                     'No creations shared yet.',
@@ -366,6 +402,10 @@ class _OtherProfileScreenState extends State<OtherProfileScreen> {
                                     return PostCard(post: item, onRefresh: _fetchProfileData);
                                   } else if (item is PollModel) {
                                     return PollCard(poll: item, onRefresh: _fetchProfileData);
+                                  } else if (item is QuestionModel) {
+                                    return QuestionCard(question: item, onRefresh: _fetchProfileData);
+                                  } else if (item is DebateModel) {
+                                    return DebateCard(debate: item, onRefresh: _fetchProfileData);
                                   }
                                   return const SizedBox.shrink();
                                 },

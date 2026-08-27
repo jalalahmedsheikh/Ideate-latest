@@ -4,9 +4,16 @@ node_modules/
 
 # Environment files (sensitive data)
 .env
+*.env
+**/*.env
 **/.env
 **/.env.local
 **/.env.*.local
+*.env.*
+
+# Temporary test / log outputs
+*.txt
+MobApp/*.txt
 
 # Build outputs
 dist/

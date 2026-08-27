@@ -11,12 +11,15 @@ import 'edit_profile_screen.dart';
 import 'change_password_screen.dart';
 import 'content_filter_screen.dart';
 import 'feed_settings_screen.dart';
+import 'blocked_users_screen.dart';
+import 'muted_users_screen.dart';
 import 'support_screen.dart';
 import 'app_info_screen.dart';
 import 'terms_of_service_screen.dart';
 import 'privacy_policy_screen.dart';
 import '../utils/app_colors.dart';
 import '../widgets/custom_button.dart';
+import '../services/api_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -106,6 +109,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Cache cleared successfully')),
       );
+    }
+  }
+
+  Future<void> _showResetRecommendationsDialog() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.dialogBackground,
+        title: Text(
+          'Reset Recommendation Profile',
+          style: GoogleFonts.outfit(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          'This will reset your personalized interest vectors and "For You" recommendations back to discovery defaults. Your bookmarks, likes, and follows will NOT be deleted.',
+          style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reset Profile', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        final response = await ApiService.post('/feed/reset-recommendations', {});
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Personalized recommendations reset successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to reset recommendations.')),
+          );
+        }
+      }
     }
   }
 
@@ -226,10 +277,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const Divider(height: 1, thickness: 1, color: Color(0xFF2C2C3E)),
-          // Feed Section
-          _sectionHeader('Feed'),
+          // Feed & Recommendations Section
+          _sectionHeader('Feed & AI Recommendations'),
           _listTile(context, Icons.filter_alt, 'Content Filter', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ContentFilterScreen()))),
           _listTile(context, Icons.settings, 'Feed Settings', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FeedSettingsScreen()))),
+          _listTile(
+            context,
+            Icons.auto_awesome,
+            'Reset Recommendation Profile',
+            _showResetRecommendationsDialog,
+            trailing: const Icon(Icons.refresh_rounded, color: AppColors.primary),
+          ),
+          const Divider(height: 1, thickness: 1, color: Color(0xFF2C2C3E)),
+          // Privacy & Safety Section
+          _sectionHeader('Privacy & Safety'),
+          _listTile(context, Icons.block, 'Blocked Accounts', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BlockedUsersScreen()))),
+          _listTile(context, Icons.volume_off, 'Muted Accounts', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MutedUsersScreen()))),
           const Divider(height: 1, thickness: 1, color: Color(0xFF2C2C3E)),
           // Security Section
           _sectionHeader('Security'),

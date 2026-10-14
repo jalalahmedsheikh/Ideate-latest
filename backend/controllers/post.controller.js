@@ -8,6 +8,7 @@ import { checkSpamAndToxicity } from "./ai.controller.js";
 import redis, { getCached, setCached, invalidateCached } from "../config/redis.js";
 import { queueNotification, queueFeedGeneration, queueTrendingUpdate } from "../queues/queue.js";
 import { io } from "../socket/socket.js";
+import { CommentService } from "../services/comment.service.js";
 
 // Helper to safely resolve/validate topic ObjectIds
 const resolveValidTopicIds = async (topics) => {
@@ -449,87 +450,27 @@ export const addComment = async (req, res) => {
   try {
     const postId = req.params.id;
     const userCommentById = req.id;
-    const { text } = req.body;
+    const { text, content, idempotencyKey } = req.body;
 
-    if (!text || text.trim().length === 0) {
-      return res.status(400).json({ message: 'Comment text is required', success: false });
-    }
-
-    const post = await Post.findById(postId);
-    if (!post) {
-      return res.status(404).json({ message: 'Post not found', success: false });
-    }
-
-    const comment = await Comment.create({
-      content: text.trim(),
-      text: text.trim(),
-      author: userCommentById,
-      post: postId
+    const result = await CommentService.createComment({
+      authorId: userCommentById,
+      content: text || content,
+      postId,
+      idempotencyKey,
     });
-
-    await comment.populate({
-      path: 'author',
-      select: "username profileImage name isverified"
-    });
-
-    post.comments.push(comment._id);
-    await post.save();
-
-    // Invalidate caches safely
-    try {
-      const authorIdStr = post.author ? post.author.toString() : null;
-      await invalidatePostCaches(postId, authorIdStr);
-    } catch (cacheErr) {
-      console.warn("⚠️ Cache invalidation warning in addComment:", cacheErr.message);
-    }
-
-    // Real-time: push new comment to post room subscribers
-    try {
-      if (io) {
-        io.to(`post:${postId}`).emit('post:comment_update', {
-          postId,
-          comment,
-          commentCount: post.comments.length,
-        });
-      }
-    } catch (socketErr) {
-      console.warn("⚠️ Socket emit warning in addComment:", socketErr.message);
-    }
-
-    // Queue comment notification asynchronously
-    try {
-      const postOwnerId = post.author ? post.author.toString() : null;
-      if (postOwnerId && postOwnerId !== userCommentById) {
-        const commenter = await User.findById(userCommentById).select('username profileImage name');
-        if (commenter) {
-          await queueNotification({
-            type: 'comment',
-            userId: userCommentById,
-            userDetails: {
-              username: commenter.username || 'User',
-              profileImage: commenter.profileImage || null,
-              name: commenter.name || commenter.username || 'User',
-            },
-            postId,
-            message: `${commenter.name || commenter.username} commented on your post: "${text.trim().slice(0, 15)}..."`,
-            targetOwnerId: postOwnerId
-          });
-        }
-      }
-    } catch (notifErr) {
-      console.warn("⚠️ Notification queue warning in addComment:", notifErr.message);
-    }
 
     return res.status(201).json({
-      message: 'Comment Added',
-      comment,
-      success: true
+      message: "Comment Added",
+      comment: result.comment,
+      success: true,
+      isDuplicate: result.isDuplicate,
     });
   } catch (error) {
     console.error("Error in addComment:", error);
-    return res.status(500).json({
+    const status = error.statusCode || 500;
+    return res.status(status).json({
       success: false,
-      message: error.message || "Internal server error."
+      message: error.message || "Internal server error.",
     });
   }
 };
@@ -537,29 +478,25 @@ export const addComment = async (req, res) => {
 export const getCommentsOfPost = async (req, res) => {
   try {
     const postId = req.params.id;
+    const currentUserId = req.id || null;
 
-    // Check Cache
-    const cachedComments = await getCached(`post:comments:${postId}`);
-    if (cachedComments) {
-      return res.status(200).json({
-        success: true,
-        comments: cachedComments,
-        cached: true
-      });
-    }
+    const result = await CommentService.getComments({
+      postId,
+      limit: 100,
+      currentUserId,
+    });
 
-    const comments = await Comment.find({ post: postId }).populate('author', 'username profileImage isverified name');
-
-    if (!comments) return res.status(404).json({ message: 'No comments found for this post', success: false });
-
-    // Cache comments for 5 minutes
-    await setCached(`post:comments:${postId}`, comments, 300);
-
-    return res.status(200).json({ success: true, comments });
-
+    return res.status(200).json({
+      success: true,
+      comments: result.comments,
+    });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ success: false, message: "Internal server error." });
+    console.error("Error in getCommentsOfPost:", error);
+    const status = error.statusCode || 500;
+    return res.status(status).json({
+      success: false,
+      message: error.message || "Internal server error.",
+    });
   }
 };
 

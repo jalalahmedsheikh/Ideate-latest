@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -6,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/post_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
+import '../services/socket_service.dart';
 import '../utils/app_colors.dart';
 import 'auth_prompt_sheet.dart';
 
@@ -43,11 +45,203 @@ class _CommentSheetState extends State<CommentSheet> {
   // Reply context state
   CommentModel? _replyingToComment;
 
+  // Real-time typing indicators
+  List<String> _activeTypers = [];
+  Timer? _typingDebounceTimer;
+
   @override
   void initState() {
     super.initState();
     _comments = List.from(widget.initialComments);
     _fetchComments();
+    _initSocket();
+  }
+
+  void _initSocket() async {
+    final socket = SocketService();
+    await socket.initSocket();
+
+    final targetId = widget.postId ?? widget.pollId ?? '';
+    final targetType = widget.postId != null ? 'post' : 'poll';
+    socket.joinDiscussion(targetId, targetType: targetType);
+
+    socket.on('comment:new', _onSocketNewComment);
+    socket.on('new_comment', _onSocketNewComment);
+    socket.on('comment:edit', _onSocketCommentEdit);
+    socket.on('comment:delete', _onSocketCommentDelete);
+    socket.on('comment:reaction', _onSocketCommentReaction);
+    socket.on('comment:pin', _onSocketCommentPin);
+    socket.on('comment:typing', _onSocketCommentTyping);
+  }
+
+  void _onSocketNewComment(dynamic data) {
+    if (!mounted || data == null) return;
+    try {
+      final map = data is Map ? Map<String, dynamic>.from(data) : {};
+      final commentData = map['comment'];
+      if (commentData == null) return;
+      final newComment = CommentModel.fromJson(commentData);
+      final isReply = map['isReply'] == true;
+      final parentCommentId = map['parentCommentId']?.toString();
+
+      setState(() {
+        if (isReply && parentCommentId != null) {
+          final replies = _repliesMap[parentCommentId] ?? [];
+          if (!replies.any((r) => r.id == newComment.id)) {
+            _repliesMap[parentCommentId] = [...replies, newComment];
+            final pIdx = _comments.indexWhere((c) => c.id == parentCommentId);
+            if (pIdx != -1) {
+              _comments[pIdx] = _comments[pIdx].copyWith(replyCount: _comments[pIdx].replyCount + 1);
+            }
+          }
+        } else {
+          if (!_comments.any((c) => c.id == newComment.id)) {
+            _comments.insert(0, newComment);
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint("Socket new comment error: $e");
+    }
+  }
+
+  void _onSocketCommentEdit(dynamic data) {
+    if (!mounted || data == null) return;
+    try {
+      final map = data is Map ? Map<String, dynamic>.from(data) : {};
+      final commentId = map['commentId']?.toString();
+      final newContent = map['content']?.toString();
+      if (commentId == null || newContent == null) return;
+
+      setState(() {
+        final cIdx = _comments.indexWhere((c) => c.id == commentId);
+        if (cIdx != -1) {
+          _comments[cIdx] = _comments[cIdx].copyWith(content: newContent, isEdited: true);
+        }
+        for (final pId in _repliesMap.keys) {
+          final rList = _repliesMap[pId]!;
+          final rIdx = rList.indexWhere((r) => r.id == commentId);
+          if (rIdx != -1) {
+            rList[rIdx] = rList[rIdx].copyWith(content: newContent, isEdited: true);
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint("Socket edit error: $e");
+    }
+  }
+
+  void _onSocketCommentDelete(dynamic data) {
+    if (!mounted || data == null) return;
+    try {
+      final map = data is Map ? Map<String, dynamic>.from(data) : {};
+      final commentId = map['commentId']?.toString();
+      final parentCommentId = map['parentCommentId']?.toString();
+      final status = map['status']?.toString();
+      if (commentId == null) return;
+
+      setState(() {
+        if (status == 'deleted') {
+          final cIdx = _comments.indexWhere((c) => c.id == commentId);
+          if (cIdx != -1) {
+            _comments[cIdx] = _comments[cIdx].copyWith(content: 'This comment was deleted.', status: 'deleted');
+          }
+          if (parentCommentId != null && _repliesMap[parentCommentId] != null) {
+            final rList = _repliesMap[parentCommentId]!;
+            final rIdx = rList.indexWhere((r) => r.id == commentId);
+            if (rIdx != -1) {
+              rList[rIdx] = rList[rIdx].copyWith(content: 'This comment was deleted.', status: 'deleted');
+            }
+          }
+        } else {
+          _comments.removeWhere((c) => c.id == commentId);
+          if (parentCommentId != null && _repliesMap[parentCommentId] != null) {
+            _repliesMap[parentCommentId]!.removeWhere((r) => r.id == commentId);
+            final pIdx = _comments.indexWhere((c) => c.id == parentCommentId);
+            if (pIdx != -1) {
+              _comments[pIdx] = _comments[pIdx].copyWith(replyCount: (_comments[pIdx].replyCount - 1).clamp(0, 99999));
+            }
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint("Socket delete error: $e");
+    }
+  }
+
+  void _onSocketCommentReaction(dynamic data) {
+    if (!mounted || data == null) return;
+    try {
+      final map = data is Map ? Map<String, dynamic>.from(data) : {};
+      final commentId = map['commentId']?.toString();
+      final likeCount = (map['likeCount'] as num?)?.toInt();
+      if (commentId == null || likeCount == null) return;
+
+      setState(() {
+        final cIdx = _comments.indexWhere((c) => c.id == commentId);
+        if (cIdx != -1) {
+          _comments[cIdx] = _comments[cIdx].copyWith(likeCount: likeCount);
+        }
+        for (final pId in _repliesMap.keys) {
+          final rList = _repliesMap[pId]!;
+          final rIdx = rList.indexWhere((r) => r.id == commentId);
+          if (rIdx != -1) {
+            rList[rIdx] = rList[rIdx].copyWith(likeCount: likeCount);
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint("Socket reaction error: $e");
+    }
+  }
+
+  void _onSocketCommentPin(dynamic data) {
+    if (!mounted || data == null) return;
+    try {
+      final map = data is Map ? Map<String, dynamic>.from(data) : {};
+      final commentId = map['commentId']?.toString();
+      final isPinned = map['isPinned'] == true;
+      if (commentId == null) return;
+
+      setState(() {
+        _comments = _comments.map((c) {
+          if (c.id == commentId) {
+            return c.copyWith(isPinned: isPinned);
+          }
+          return isPinned ? c.copyWith(isPinned: false) : c;
+        }).toList();
+        _comments.sort((a, b) => (b.isPinned ? 1 : 0).compareTo(a.isPinned ? 1 : 0));
+      });
+    } catch (e) {
+      debugPrint("Socket pin error: $e");
+    }
+  }
+
+  void _onSocketCommentTyping(dynamic data) {
+    if (!mounted || data == null) return;
+    try {
+      final map = data is Map ? Map<String, dynamic>.from(data) : {};
+      final typersList = map['typers'] as List? ?? [];
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      final currentUserId = auth.currentUser?.id;
+
+      final names = <String>[];
+      for (final t in typersList) {
+        if (t is Map) {
+          final uid = t['userId']?.toString();
+          if (uid != currentUserId) {
+            final name = t['name'] ?? t['username'] ?? 'User';
+            names.add(name.toString());
+          }
+        }
+      }
+
+      setState(() {
+        _activeTypers = names;
+      });
+    } catch (e) {
+      debugPrint("Socket typing error: $e");
+    }
   }
 
   Future<void> _fetchComments() async {
@@ -139,6 +333,7 @@ class _CommentSheetState extends State<CommentSheet> {
         if (widget.pollId != null) 'pollId': widget.pollId,
         if (_replyingToComment != null)
           'parentCommentId': _replyingToComment!.id,
+        'idempotencyKey': 'mob_${auth.currentUser?.id ?? "usr"}_${DateTime.now().millisecondsSinceEpoch}',
       };
 
       final response = await ApiService.post('/comment/add', body);
@@ -309,6 +504,15 @@ class _CommentSheetState extends State<CommentSheet> {
                 },
               ),
             ],
+            if (!isReply)
+              ListTile(
+                leading: Icon(comment.isPinned ? Icons.push_pin_outlined : Icons.push_pin, color: Colors.amber),
+                title: Text(comment.isPinned ? 'Unpin from Top' : 'Pin to Top', style: GoogleFonts.inter(color: AppColors.textPrimary)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _togglePinComment(comment);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.flag_outlined, color: AppColors.textSecondary),
               title: Text('Report Comment', style: GoogleFonts.inter(color: AppColors.textPrimary)),
@@ -323,6 +527,27 @@ class _CommentSheetState extends State<CommentSheet> {
         ),
       ),
     );
+  }
+
+  Future<void> _togglePinComment(CommentModel comment) async {
+    try {
+      final response = await ApiService.post('/comment/${comment.id}/pin', {});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final bool isPinned = data['isPinned'] ?? !comment.isPinned;
+        setState(() {
+          _comments = _comments.map((c) {
+            if (c.id == comment.id) {
+              return c.copyWith(isPinned: isPinned);
+            }
+            return isPinned ? c.copyWith(isPinned: false) : c;
+          }).toList();
+          _comments.sort((a, b) => (b.isPinned ? 1 : 0).compareTo(a.isPinned ? 1 : 0));
+        });
+      }
+    } catch (e) {
+      debugPrint("Pin error: $e");
+    }
   }
 
   void _editCommentDialog(CommentModel comment, {bool isReply = false}) {
@@ -422,6 +647,19 @@ class _CommentSheetState extends State<CommentSheet> {
 
   @override
   void dispose() {
+    final targetId = widget.postId ?? widget.pollId ?? '';
+    final targetType = widget.postId != null ? 'post' : 'poll';
+    _typingDebounceTimer?.cancel();
+    final socket = SocketService();
+    socket.sendTypingStop(targetId, targetType: targetType, parentCommentId: _replyingToComment?.id);
+    socket.leaveDiscussion(targetId, targetType: targetType);
+    socket.off('comment:new', _onSocketNewComment);
+    socket.off('new_comment', _onSocketNewComment);
+    socket.off('comment:edit', _onSocketCommentEdit);
+    socket.off('comment:delete', _onSocketCommentDelete);
+    socket.off('comment:reaction', _onSocketCommentReaction);
+    socket.off('comment:pin', _onSocketCommentPin);
+    socket.off('comment:typing', _onSocketCommentTyping);
     _commentController.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -450,6 +688,24 @@ class _CommentSheetState extends State<CommentSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Pinned Badge
+          if (comment.isPinned) ...[
+            Row(
+              children: [
+                const Icon(Icons.push_pin, size: 12, color: Colors.amber),
+                const SizedBox(width: 4),
+                Text(
+                  'Pinned Discussion',
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.amber,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+          ],
           // Author Header
           Row(
             children: [
@@ -773,6 +1029,35 @@ class _CommentSheetState extends State<CommentSheet> {
                 ),
               ),
 
+            // Live Typing Indicator Banner
+            if (_activeTypers.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                color: AppColors.surface,
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.5, color: AppColors.primary),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _activeTypers.length == 1
+                            ? '${_activeTypers.first} is typing...'
+                            : '${_activeTypers.length} people are typing...',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontStyle: FontStyle.italic,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
             // Submit input bar
             Container(
               padding: const EdgeInsets.all(16),
@@ -789,6 +1074,20 @@ class _CommentSheetState extends State<CommentSheet> {
                       controller: _commentController,
                       focusNode: _focusNode,
                       style: GoogleFonts.inter(color: AppColors.textPrimary),
+                      onChanged: (text) {
+                        final targetId = widget.postId ?? widget.pollId ?? '';
+                        final targetType = widget.postId != null ? 'post' : 'poll';
+                        if (text.trim().isNotEmpty) {
+                          SocketService().sendTypingStart(targetId, targetType: targetType, parentCommentId: _replyingToComment?.id);
+                          _typingDebounceTimer?.cancel();
+                          _typingDebounceTimer = Timer(const Duration(milliseconds: 2500), () {
+                            SocketService().sendTypingStop(targetId, targetType: targetType, parentCommentId: _replyingToComment?.id);
+                          });
+                        } else {
+                          _typingDebounceTimer?.cancel();
+                          SocketService().sendTypingStop(targetId, targetType: targetType, parentCommentId: _replyingToComment?.id);
+                        }
+                      },
                       decoration: InputDecoration(
                         hintText: _replyingToComment != null
                             ? 'Reply to @${_replyingToComment!.author.username}...'

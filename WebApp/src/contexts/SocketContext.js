@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import io from 'socket.io-client';
+import Cookies from 'js-cookie';
 import { UserContext } from './UserContext';
 import axiosInstance from '../pages/axiosInstance';
 
@@ -64,10 +65,13 @@ export const SocketProvider = ({ children }) => {
     // Load history first
     fetchNotifications();
 
-    // Open WebSocket
+    // Open authenticated WebSocket
+    const token = Cookies.get('token') || localStorage.getItem('token');
     const newSocket = io(SERVER_URL, {
-      query: { userId: user.user._id },
-      reconnectionAttempts: 5,
+      auth: { token },
+      query: { token },
+      withCredentials: true,
+      reconnectionAttempts: 10,
       reconnectionDelay: 2000,
     });
 

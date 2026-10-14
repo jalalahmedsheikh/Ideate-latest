@@ -10,6 +10,7 @@ class CommentModel {
   final int likeCount;
   final bool isLiked;
   final bool isEdited;
+  final bool isPinned;
   final String status;
   final DateTime createdAt;
 
@@ -22,6 +23,7 @@ class CommentModel {
     this.likeCount = 0,
     this.isLiked = false,
     this.isEdited = false,
+    this.isPinned = false,
     this.status = "active",
     required this.createdAt,
   });
@@ -69,6 +71,7 @@ class CommentModel {
           ((json['likes'] as List?)?.length ?? 0),
       isLiked: json['isLiked'] ?? false,
       isEdited: json['isEdited'] ?? false,
+      isPinned: json['isPinned'] ?? false,
       status: json['status'] ?? 'active',
       createdAt: json['createdAt'] != null
           ? DateTime.parse(json['createdAt'])
@@ -82,6 +85,7 @@ class CommentModel {
     int? likeCount,
     bool? isLiked,
     bool? isEdited,
+    bool? isPinned,
     String? status,
   }) {
     return CommentModel(
@@ -93,6 +97,7 @@ class CommentModel {
       likeCount: likeCount ?? this.likeCount,
       isLiked: isLiked ?? this.isLiked,
       isEdited: isEdited ?? this.isEdited,
+      isPinned: isPinned ?? this.isPinned,
       status: status ?? this.status,
       createdAt: createdAt,
     );

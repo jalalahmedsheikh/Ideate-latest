@@ -1,6 +1,11 @@
+import "dotenv/config";
 import mongoose from "mongoose";
 import dns from "dns";
 import { Topic } from "../models/topic.model.js";
+
+try {
+  dns.setServers(["8.8.8.8", "1.1.1.1"]);
+} catch (_) {}
 
 const DEFAULT_TOPICS = [
   { name: "Technology", slug: "technology", category: "Technology", icon: "💻", description: "All things technology, software, and gadgets" },
